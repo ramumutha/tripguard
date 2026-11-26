@@ -1,0 +1,91 @@
+:root {
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --ink: #111625;
+  --muted: #4b5563;
+  --border: #e2e8f0;
+  --accent: #1d4ed8;
+  --ok-bg: #dcfce7;
+  --ok-ink: #166534;
+  --warn-bg: #fef3c7;
+  --warn-ink: #92400e;
+  --err-bg: #fee2e2;
+  --err-ink: #991b1b;
+}
+
+* { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+body { margin: 0; background: var(--bg); color: var(--ink); padding-bottom: 84px; }
+
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;
+}
+.topbar h1 { margin: 0; font-size: 17px; }
+.api-pill { font-size: 11px; background: #eef2ff; color: var(--accent); padding: 4px 8px; border-radius: 999px; font-weight: 600; }
+
+.wrap { max-width: 480px; margin: 12px auto; padding: 0 12px; display: flex; flex-direction: column; gap: 12px; }
+.screen { display: none; flex-direction: column; gap: 12px; }
+.screen.active { display: flex; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
+.card h2 { margin: 0 0 6px; font-size: 16px; }
+.sub { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+
+label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin: 8px 0 4px; }
+input, select, textarea {
+  width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 14px; background: #fff;
+}
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.chip {
+  padding: 7px 12px; border-radius: 999px; border: 1px solid #cbd5e1;
+  background: #f8fafc; color: var(--ink); font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.chip.active { background: var(--ink); color: #ffffff; border-color: var(--ink); }
+
+.badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.badge.ok { background: var(--ok-bg); color: var(--ok-ink); }
+.badge.warn { background: var(--warn-bg); color: var(--warn-ink); }
+.badge.err { background: var(--err-bg); color: var(--err-ink); }
+
+.banner { border-radius: 12px; padding: 12px; font-size: 13px; }
+.banner.warn { background: var(--warn-bg); color: var(--warn-ink); border: 1px solid #fcd34d; }
+.banner.err { background: var(--err-bg); color: var(--err-ink); border: 1px solid #fca5a5; }
+.banner.ok { background: var(--ok-bg); color: var(--ok-ink); border: 1px solid #86efac; }
+
+.disclaimer { font-size: 11px; color: var(--muted); background: #f8fafc; border: 1px solid var(--border); padding: 9px 10px; border-radius: 10px; margin-top: 8px; }
+.check-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; margin-top: 10px; }
+.check-row input { width: auto; margin-top: 2px; }
+
+.btn-primary {
+  width: 100%; margin-top: 12px; padding: 12px; border: none; border-radius: 10px;
+  background: var(--ink); color: #ffffff; font-size: 14px; font-weight: 700; cursor: pointer;
+}
+.btn-secondary {
+  width: 100%; margin-top: 8px; padding: 10px; border: 1px solid #cbd5e1; border-radius: 10px;
+  background: #f8fafc; color: var(--ink); font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.btn-danger {
+  width: 100%; margin-top: 10px; padding: 12px; border: none; border-radius: 10px;
+  background: #dc2626; color: #ffffff; font-size: 14px; font-weight: 700; cursor: pointer;
+}
+
+.workshop-item { border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin-top: 8px; }
+.workshop-item.selected { border-color: var(--ink); background: #f8fafc; }
+
+.share-preview {
+  border: 2px solid var(--ink); border-radius: 14px; padding: 14px; background: #ffffff;
+}
+.share-preview .big-score { font-size: 28px; font-weight: 800; color: var(--accent); }
+
+.bottom-nav {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
+  background: var(--surface); border-top: 1px solid var(--border);
+  display: grid; grid-template-columns: repeat(5, 1fr); padding: 6px 4px;
+}
+.nav-btn {
+  background: none; border: none; padding: 6px 2px; font-size: 11px; font-weight: 600;
+  color: var(--muted); cursor: pointer;
+}
+.nav-btn.active { color: var(--ink); font-weight: 800; }

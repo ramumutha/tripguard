@@ -1,6 +1,6 @@
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware  
 
 from app.schemas import (
     BookingRequestCreate,
@@ -16,6 +16,9 @@ from app.schemas import (
 from app.store import SAMPLE_WORKSHOPS, InMemoryStore
 
 app = FastAPI(title="TripGuard MVP API", version="0.2.0")
+
+from fastapi.staticfiles import StaticFiles
+app.mount("/app", StaticFiles(directory="ui", html=True), name="ui")
 
 # Allow local web/mobile/Stitch previews to call the API during development.
 # Tighten allow_origins to your exact frontend domain(s) before production.

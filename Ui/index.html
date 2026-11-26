@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TripGuard — Phase 1 UI</title>
+  <link rel="stylesheet" href="/app/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>TripGuard</h1>
+    <span class="api-pill" id="apiStatus">API: checking…</span>
+  </header>
+
+  <main class="wrap">
+    <!-- SCREEN 1: ADD VEHICLE (RC + PLATE CHECK) -->
+    <section id="screen-1" class="screen active">
+      <div class="card">
+        <h2>1. Add Vehicle</h2>
+        <p class="sub">Upload RC and scan number plate to auto-fill and check for plate mismatch.</p>
+
+        <label>Vehicle Class</label>
+        <div class="chips" id="classChips">
+          <button type="button" class="chip" data-val="2W">2-Wheeler</button>
+          <button type="button" class="chip active" data-val="4W">Car / SUV</button>
+          <button type="button" class="chip" data-val="COMMERCIAL">Commercial</button>
+        </div>
+
+        <div class="grid2">
+          <div>
+            <label>RC Upload (Photo)</label>
+            <input type="file" id="rcFile" accept="image/*" />
+            <label>RC Reg. Number</label>
+            <input id="rcPlate" value="KA 01 AB 1234" />
+          </div>
+          <div>
+            <label>Plate Scan (Photo)</label>
+            <input type="file" id="plateFile" accept="image/*" capture="environment" />
+            <label>Scanned Plate No.</label>
+            <input id="scannedPlate" value="KA 01 AB 1284" />
+          </div>
+        </div>
+
+        <div id="mismatchBanner" class="banner warn" style="display:none; margin-top:10px;">
+          <strong id="mismatchTitle">Plate number doesn't match RC</strong>
+          <div id="mismatchMsg" style="margin-top:4px;"></div>
+        </div>
+
+        <div class="grid2">
+          <div><label>Owner Name</label><input id="ownerName" value="Pilot Driver" /></div>
+          <div><label>Emergency Contact</label><input id="emergencyContact" value="+91 98765 43210" /></div>
+        </div>
+        <div class="grid2">
+          <div><label>Make</label><input id="make" value="Tata" /></div>
+          <div><label>Model</label><input id="model" value="Nexon EV Max" /></div>
+        </div>
+        <div class="grid2">
+          <div><label>Year</label><input id="year" type="number" value="2024" /></div>
+          <div>
+            <label>Fuel Type</label>
+            <select id="fuelType">
+              <option value="EV" selected>EV</option>
+              <option value="PETROL">PETROL</option>
+              <option value="DIESEL">DIESEL</option>
+              <option value="HYBRID">HYBRID</option>
+              <option value="CNG">CNG</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid2">
+          <div><label>Odometer (km)</label><input id="odometer" type="number" value="14820" /></div>
+          <div><label>Last Service (km ago)</label><input id="lastServiceKm" type="number" value="4200" /></div>
+        </div>
+
+        <label class="check-row">
+          <input type="checkbox" id="acceptDisclaimer" checked />
+          <span>I understand this is an advisory check, not an official RTO/VAHAN check, and OCR/scans can misread text.</span>
+        </label>
+
+        <div class="disclaimer">
+          Disclaimer: Extracted RC/plate info is for profile convenience and basic consistency checks only. Not an official RTO/VAHAN or legal authority.
+        </div>
+
+        <button type="button" class="btn-primary" onclick="submitVehicle()">Save Vehicle & Continue →</button>
+      </div>
+    </section>
+
+    <!-- SCREEN 2: PRE-TRIP HEALTH SCAN -->
+    <section id="screen-2" class="screen">
+      <div class="card">
+        <h2>2. Pre-Trip Health Scan</h2>
+        <p class="sub" id="scanVehicleHeader">Vehicle: veh_demo_4w</p>
+
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span class="badge warn" id="readinessBadge">Readiness: Pending</span>
+          <strong id="readinessScoreText">--%</strong>
+        </div>
+
+        <div class="grid2" style="margin-top:8px;">
+          <div><label>Trip Distance (km)</label><input id="tripDistance" type="number" value="268" /></div>
+          <div>
+            <label>Ghat Route?</label>
+            <select id="isGhat">
+              <option value="true" selected>Yes (Ghat / Hills)</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+        </div>
+
+        <label>Tyres & Tread / Pressure</label>
+        <select id="itemTyres">
+          <option value="ALERT" selected>Alert — Low pressure / tread wear</option>
+          <option value="CHECK">Check — Needs close look</option>
+          <option value="OK">OK — Normal</option>
+        </select>
+
+        <label>Coolant / Thermal / Brake Fluid</label>
+        <select id="itemFluids">
+          <option value="CHECK" selected>Check — Near minimum level</option>
+          <option value="ALERT">Alert — Urgent fluid issue</option>
+          <option value="OK">OK — Normal</option>
+        </select>
+
+        <label>Lights, Horn & Brakes Check</label>
+        <select id="itemBrakesLights">
+          <option value="OK" selected>OK — Working properly</option>
+          <option value="CHECK">Check — Inspect soon</option>
+          <option value="ALERT">Alert — Fault detected</option>
+        </select>
+
+        <label>Attach Scan Photo (Optional)</label>
+        <input type="file" id="scanPhoto" accept="image/*" capture="environment" />
+
+        <div id="advisoriesBox" style="margin-top:10px;"></div>
+        <div class="disclaimer">
+          Disclaimer: Health scan scores and advisories are informational guidance only, not a certified safety inspection.
+        </div>
+
+        <button type="button" class="btn-primary" onclick="submitScan()">Run Health Scan</button>
+        <button type="button" class="btn-secondary" onclick="goScreen(3)">Go to Trip & Offline Safety →</button>
+      </div>
+    </section>
+
+    <!-- SCREEN 3: PLAN TRIP, PROTECTION & OFFLINE SOS -->
+    <section id="screen-3" class="screen">
+      <div class="card">
+        <h2>3. Plan Trip & Offline Safety</h2>
+        <p class="sub">Cache trip safety data locally and trigger SOS fallback if network drops.</p>
+
+        <div class="grid2">
+          <div><label>Origin</label><input id="origin" value="Bengaluru (HSR Layout)" /></div>
+          <div><label>Destination</label><input id="destination" value="Madikeri, Coorg" /></div>
+        </div>
+
+        <label>Route Type</label>
+        <select id="routeType">
+          <option value="GHAT" selected>Ghat & Highway</option>
+          <option value="HIGHWAY">Express Highway</option>
+          <option value="LONG_RIDE">Long Ride</option>
+          <option value="CITY">City</option>
+        </select>
+
+        <label class="check-row">
+          <input type="checkbox" id="optProtection" />
+          <span><strong>Optional Trip / Roadside Protection Add-On</strong> (opt-in only)</span>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="ackProtection" checked />
+          <span>Acknowledge protection terms & disclaimer</span>
+        </label>
+        <div class="disclaimer">
+          Disclaimer: Optional trip/roadside protection is subject to partner terms, exclusions, and applicable rules; not a guarantee against breakdowns.
+        </div>
+
+        <button type="button" class="btn-primary" onclick="submitTrip()">Save & Cache Offline Pack</button>
+        <button type="button" class="btn-danger" onclick="triggerSos()">SOS Alert (No-Network SMS Fallback)</button>
+
+        <div id="offlinePackBox" style="margin-top:10px;"></div>
+      </div>
+    </section>
+
+    <!-- SCREEN 4: SERVICE ADVISORIES & WORKSHOPS -->
+    <section id="screen-4" class="screen">
+      <div class="card">
+        <h2>4. Service Advisories & Workshops</h2>
+        <p class="sub">Request a pre-briefed workshop slot with your scan summary.</p>
+
+        <label>Preferred Slot</label>
+        <input id="bookingSlot" value="Tomorrow, 10:30 AM" />
+
+        <label class="check-row">
+          <input type="checkbox" id="attachScanSummary" checked />
+          <span>Attach latest pre-trip scan summary to workshop request</span>
+        </label>
+
+        <div id="workshopsList"></div>
+        <div id="bookingResult" style="margin-top:10px;"></div>
+      </div>
+    </section>
+
+    <!-- SCREEN 5: SHAREABLE TRIP CARD -->
+    <section id="screen-5" class="screen">
+      <div class="card">
+        <h2>5. Share Trip Card</h2>
+        <p class="sub">Preview a privacy-safe card for WhatsApp, family, or riding groups.</p>
+
+        <label class="check-row">
+          <input type="checkbox" id="maskPrivacy" checked onchange="refreshShareCard()" />
+          <span>Mask plate & hide odometer / emergency details</span>
+        </label>
+
+        <div class="share-preview" id="sharePreviewCard" style="margin-top:10px;">
+          <div id="cardVehicle">KA 01 •••• 1234 • Tata Nexon EV Max</div>
+          <div id="cardRoute" class="sub">Bengaluru → Madikeri, Coorg (GHAT)</div>
+          <div class="big-score" id="cardBadge">82%</div>
+          <ul id="cardHighlights" style="padding-left:18px; margin:8px 0; font-size:13px;"></ul>
+          <div class="disclaimer">Advisory check only — not an official RTO/VAHAN or safety guarantee.</div>
+        </div>
+
+        <button type="button" class="btn-primary" onclick="copyShareText()">Copy Share Summary</button>
+      </div>
+    </section>
+  </main>
+
+  <nav class="bottom-nav">
+    <button type="button" class="nav-btn active" onclick="goScreen(1)">1. Vehicle</button>
+    <button type="button" class="nav-btn" onclick="goScreen(2)">2. Scan</button>
+    <button type="button" class="nav-btn" onclick="goScreen(3)">3. Trip/SOS</button>
+    <button type="button" class="nav-btn" onclick="goScreen(4)">4. Service</button>
+    <button type="button" class="nav-btn" onclick="goScreen(5)">5. Share</button>
+  </nav>
+
+  <script src="/app/app.js"></script>
+</body>
+</html>
