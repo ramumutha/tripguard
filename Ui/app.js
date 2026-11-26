@@ -1,244 +1,551 @@
-const API_BASE = window.location.origin;
+const API = window.location.origin;
 
 const state = {
-  vehicleClass: "4W",
-  vehicleId: "veh_demo_4w",
-  scanId: "scan_demo_01",
-  tripId: "trip_demo_01",
-  selectedWorkshopId: "ws-101",
-  readinessScore: 82,
-  overallStatus: "URGENT_CHECK"
+  user: JSON.parse(localStorage.getItem("tg_user") || "null"),
+  vehicles: [],
+  trips: [],
+  bookings: [],
+  modalClass: "4W",
+  modalSourceTab: "garage",
+  activeDetailsVehicleId: null,
+  latestShareText: "",
+  scanItems: [
+    { item_key: "tyres", label: "Tyres, Tread & Pressure", status: "OK" },
+    { item_key: "brakes", label: "Brakes & Brake Fluid", status: "OK" },
+    { item_key: "fluids", label: "Engine Oil / Coolant", status: "CHECK" },
+    { item_key: "lights_battery", label: "Lights, Horn & Battery", status: "OK" }
+  ]
 };
 
-function goScreen(num) {
-  document.querySelectorAll(".screen").forEach((el, idx) => {
-    el.classList.toggle("active", idx + 1 === num);
-  });
-  document.querySelectorAll(".nav-btn").forEach((btn, idx) => {
-    btn.classList.toggle("active", idx + 1 === num);
-  });
-  if (num === 4) loadWorkshops();
-  if (num === 5) refreshShareCard();
+// --- INIT ---
+async function init() {
+  document.getElementById("tripDate").value = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  document.getElementById("hDate").value = new Date().toISOString().slice(0, 10);
+  setupModalChips();
+  renderScanChecklist();
+  checkHealth();
+
+  if (state.user) {
+    enterApp();
+  }
 }
 
-document.querySelectorAll("#classChips .chip").forEach((chip) => {
-  chip.addEventListener("click", () => {
-    document.querySelectorAll("#classChips .chip").forEach((c) => c.classList.remove("active"));
-    chip.classList.add("active");
-    state.vehicleClass = chip.dataset.val;
-  });
-});
-
-async function checkApi() {
-  const pill = document.getElementById("apiStatus");
+async function checkHealth() {
+  const el = document.getElementById("apiStatus");
   try {
-    const res = await fetch(`${API_BASE}/health`);
-    if (res.ok) {
-      pill.textContent = "API: connected";
-      return;
+    const r = await fetch(`${API}/health`);
+    el.textContent = r.ok ? "Online • Ready" : "API error";
+  } catch {
+    el.textContent = "Offline";
+  }
+}
+
+// --- AUTH ---
+function requestOtp() {
+  const id = document.getElementById("loginIdentifier").value.trim();
+  if (id.length < 5) return alert("Enter a valid mobile number or email ID.");
+  document.getElementById("otpBox").style.display = "block";
+  document.getElementById("btnSendOtp").style.display = "none";
+  document.getElementById("btnVerifyOtp").style.display = "block";
+}
+
+async function verifyAndLogin() {
+  const otp = document.getElementById("loginOtp").value.trim();
+  if (otp !== "1234") return alert("For the pilot demo, use OTP 1234.");
+  await doLogin(
+    document.getElementById("loginIdentifier").value.trim(),
+    document.getElementById("loginName").value.trim()
+  );
+}
+
+async function quickDemoLogin() {
+  await doLogin("+919876543210", "Demo Society Member");
+}
+
+async function doLogin(identifier, name) {
+  const res = await fetch(`${API}/api/v1/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ identifier, name })
+  });
+  const data = await res.json();
+  if (!res.ok) return alert(data.detail || "Sign-in failed");
+  state.user = data;
+  localStorage.setItem("tg_user", JSON.stringify(data));
+  enterApp();
+}
+
+function logout() {
+  localStorage.removeItem("tg_user");
+  state.user = null;
+  document.getElementById("bottomNav").classList.remove("visible");
+  document.getElementById("userChip").style.display = "none";
+  document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+  document.getElementById("screen-auth").classList.add("active");
+}
+
+async function enterApp() {
+  document.getElementById("userChip").style.display = "inline-block";
+  document.getElementById("userChip").textContent = `${state.user.name} • Sign Out`;
+  document.getElementById("bottomNav").classList.add("visible");
+  await refreshAllData();
+  goTab("garage");
+}
+
+// --- NAVIGATION ---
+function goTab(tab) {
+  document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+  document.getElementById(`screen-${tab}`).classList.add("active");
+  document.querySelectorAll(".nav-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.tab === tab);
+  });
+  if (tab === "service") renderWorkshopsForSelected();
+  if (tab === "share") loadShareCard();
+}
+
+// --- DATA SYNC ---
+async function refreshAllData(selectVehicleId = null) {
+  const uid = encodeURIComponent(state.user.user_id);
+  const [vRes, tRes, bRes] = await Promise.all([
+    fetch(`${API}/api/v1/vehicles?user_id=${uid}`),
+    fetch(`${API}/api/v1/trips?user_id=${uid}`),
+    fetch(`${API}/api/v1/bookings?user_id=${uid}`)
+  ]);
+  state.vehicles = await vRes.json();
+  state.trips = await tRes.json();
+  state.bookings = await bRes.json();
+
+  renderGarage();
+  populateVehiclePickers(selectVehicleId);
+  renderTripsList();
+  renderBookingsList();
+}
+
+function vehicleById(id) {
+  return state.vehicles.find((v) => v.vehicle_id === id);
+}
+
+function populateVehiclePickers(forceSelectId = null) {
+  const ids = ["scanVehicleSelect", "tripVehicleSelect", "bookVehicleSelect", "shareVehicleSelect"];
+  const optionsHtml = state.vehicles.length
+    ? state.vehicles
+        .map((v) => `<option value="${v.vehicle_id}">${v.normalized_scanned_plate} — ${v.make} ${v.model} (${v.vehicle_class})</option>`)
+        .join("")
+    : `<option value="">No vehicle registered yet — tap + New</option>`;
+
+  ids.forEach((elId) => {
+    const sel = document.getElementById(elId);
+    const prev = sel.value;
+    sel.innerHTML = optionsHtml;
+    if (forceSelectId && state.vehicles.some((v) => v.vehicle_id === forceSelectId)) {
+      sel.value = forceSelectId;
+    } else if (prev && state.vehicles.some((v) => v.vehicle_id === prev)) {
+      sel.value = prev;
     }
-  } catch (_) {}
-  pill.textContent = "API: offline";
+  });
 }
 
-async function submitVehicle() {
+// --- GARAGE ---
+function renderGarage() {
+  const el = document.getElementById("garageList");
+  if (!state.vehicles.length) {
+    el.innerHTML = `<div class="banner warn">No vehicles added yet. Tap <strong>+ Add Vehicle</strong> above to register your first 2W, car, or commercial vehicle.</div>`;
+    return;
+  }
+  el.innerHTML = state.vehicles
+    .map((v) => {
+      const insText = v.insurance && v.insurance.expiry_date
+        ? `${v.insurance.provider || "Policy"} • Exp: ${v.insurance.expiry_date}`
+        : "Insurance not added";
+      const insClass = v.insurance && v.insurance.expiry_date ? "ok" : "warn";
+      return `
+        <div class="veh-card" style="margin-top:10px;">
+          <div class="card-head" style="margin:0;">
+            <div>
+              <span class="plate-tag">${v.normalized_scanned_plate}</span>
+              <h3 style="margin-top:6px;">${v.make} ${v.model} (${v.year})</h3>
+            </div>
+            <span class="badge info">${v.vehicle_class} • ${v.fuel_type}</span>
+          </div>
+          <div class="meta-row">
+            <span>Odo: ${v.odometer_km.toLocaleString()} km</span>
+            <span>•</span>
+            <span class="badge ${v.plate_mismatch ? "err" : "ok"}">${v.plate_mismatch ? "RC/Plate Mismatch" : "RC Matched"}</span>
+            <span class="badge ${insClass}">${insText}</span>
+          </div>
+          <div class="action-row">
+            <button type="button" class="btn-secondary" style="margin:0;" onclick="openDetailsModal('${v.vehicle_id}')">Insurance & History (${v.history.length})</button>
+            <button type="button" class="btn-secondary" style="margin:0;" onclick="jumpToScan('${v.vehicle_id}')">Run Scan</button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function jumpToScan(vehicleId) {
+  document.getElementById("scanVehicleSelect").value = vehicleId;
+  goTab("scan");
+}
+
+// --- INLINE ADD VEHICLE MODAL ---
+function setupModalChips() {
+  document.querySelectorAll("#modalClassChips .chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#modalClassChips .chip").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      state.modalClass = btn.dataset.val;
+    });
+  });
+}
+
+function openAddVehicleModal(sourceTab) {
+  state.modalSourceTab = sourceTab;
+  document.getElementById("mVehicleError").innerHTML = "";
+  document.getElementById("addVehicleModal").classList.add("open");
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove("open");
+}
+
+async function submitNewVehicle() {
+  const rc = document.getElementById("mRcPlate").value.trim();
+  const plate = document.getElementById("mScanPlate").value.trim() || rc;
+  const make = document.getElementById("mMake").value.trim();
+  const model = document.getElementById("mModel").value.trim();
+  if (!rc || !make || !model) {
+    document.getElementById("mVehicleError").innerHTML = `<div class="banner err">Please fill RC number, make, and model.</div>`;
+    return;
+  }
+
+  const insProvider = document.getElementById("mInsProvider").value.trim();
+  const insExpiry = document.getElementById("mInsExpiry").value;
   const payload = {
-    owner_name: document.getElementById("ownerName").value,
-    emergency_contact: document.getElementById("emergencyContact").value,
-    vehicle_class: state.vehicleClass,
-    make: document.getElementById("make").value,
-    model: document.getElementById("model").value,
-    year: Number(document.getElementById("year").value),
-    fuel_type: document.getElementById("fuelType").value,
-    odometer_km: Number(document.getElementById("odometer").value),
-    last_service_km_ago: Number(document.getElementById("lastServiceKm").value) || null,
-    rc_registration_number: document.getElementById("rcPlate").value,
-    plate_scanned_number: document.getElementById("scannedPlate").value,
-    accepts_advisory_disclaimer: document.getElementById("acceptDisclaimer").checked
+    user_id: state.user.user_id,
+    owner_name: state.user.name,
+    emergency_contact: document.getElementById("mEmerg").value.trim() || state.user.identifier,
+    vehicle_class: state.modalClass,
+    make,
+    model,
+    year: Number(document.getElementById("mYear").value) || 2024,
+    fuel_type: document.getElementById("mFuel").value,
+    odometer_km: Number(document.getElementById("mOdo").value) || 0,
+    rc_registration_number: rc,
+    plate_scanned_number: plate,
+    accepts_advisory_disclaimer: document.getElementById("mDisclaimer").checked,
+    insurance: insProvider || insExpiry ? { provider: insProvider, expiry_date: insExpiry, policy_type: "COMPREHENSIVE", policy_number: "" } : null
   };
 
-  const res = await fetch(`${API_BASE}/api/v1/vehicles`, {
+  const res = await fetch(`${API}/api/v1/vehicles`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
   const data = await res.json();
   if (!res.ok) {
-    alert(data.detail || "Error saving vehicle");
+    document.getElementById("mVehicleError").innerHTML = `<div class="banner err">${data.detail || "Could not save vehicle"}</div>`;
     return;
   }
 
-  state.vehicleId = data.vehicle_id;
-  document.getElementById("scanVehicleHeader").textContent =
-    `Vehicle: ${data.vehicle_id} (${data.normalized_scanned_plate} • ${data.make} ${data.model})`;
-
-  const banner = document.getElementById("mismatchBanner");
-  banner.style.display = "block";
-  banner.className = data.plate_mismatch ? "banner warn" : "banner ok";
-  document.getElementById("mismatchTitle").textContent = data.plate_mismatch
-    ? "Plate number doesn't match RC"
-    : "RC & Plate match";
-  document.getElementById("mismatchMsg").textContent = data.verification_notice;
-
-  if (!data.plate_mismatch) {
-    goScreen(2);
-  }
+  closeModal("addVehicleModal");
+  ["mRcPlate", "mScanPlate", "mMake", "mModel", "mInsProvider", "mInsExpiry"].forEach((id) => (document.getElementById(id).value = ""));
+  await refreshAllData(data.vehicle_id);
+  if (state.modalSourceTab === "service") renderWorkshopsForSelected();
+  if (data.plate_mismatch) alert(data.verification_notice);
 }
 
-async function submitScan() {
-  const payload = {
-    vehicle_id: state.vehicleId,
-    trip_distance_km: Number(document.getElementById("tripDistance").value),
-    is_ghat_route: document.getElementById("isGhat").value === "true",
-    items: [
-      { item_key: "tyres", label: "Tyres & Tread / Pressure", status: document.getElementById("itemTyres").value },
-      { item_key: "fluids", label: "Coolant / Thermal / Brake Fluid", status: document.getElementById("itemFluids").value },
-      { item_key: "brakes_lights", label: "Lights, Horn & Brakes", status: document.getElementById("itemBrakesLights").value }
-    ]
-  };
+// --- INSURANCE & HISTORY MODAL ---
+function openDetailsModal(vehicleId) {
+  const v = vehicleById(vehicleId);
+  if (!v) return;
+  state.activeDetailsVehicleId = vehicleId;
+  document.getElementById("detailsTitle").textContent = `${v.make} ${v.model}`;
+  document.getElementById("detailsSub").textContent = `${v.normalized_scanned_plate} • ${v.odometer_km.toLocaleString()} km`;
 
-  const res = await fetch(`${API_BASE}/api/v1/scans`, {
+  const ins = v.insurance || {};
+  document.getElementById("dInsProvider").value = ins.provider || "";
+  document.getElementById("dInsPolicy").value = ins.policy_number || "";
+  document.getElementById("dInsType").value = ins.policy_type || "COMPREHENSIVE";
+  document.getElementById("dInsExpiry").value = ins.expiry_date || "";
+
+  renderHistoryTimeline(v.history || []);
+  document.getElementById("detailsModal").classList.add("open");
+}
+
+function renderHistoryTimeline(list) {
+  const el = document.getElementById("detailsHistoryList");
+  if (!list.length) {
+    el.innerHTML = `<p class="sub">No history records yet.</p>`;
+    return;
+  }
+  el.innerHTML = list
+    .map((h) => `
+      <div class="list-item">
+        <div style="display:flex; justify-content:space-between; font-size:12px;">
+          <strong>${h.record_type}</strong>
+          <span style="color:#64748b;">${h.date}${h.odometer_km ? ` • ${h.odometer_km} km` : ""}</span>
+        </div>
+        <div style="font-size:13px; margin-top:4px;">${h.summary}</div>
+        ${h.cost_inr ? `<div style="font-size:12px; color:#1d4ed8; margin-top:3px;">₹${h.cost_inr}</div>` : ""}
+      </div>
+    `)
+    .join("");
+}
+
+async function saveInsurance() {
+  const vid = state.activeDetailsVehicleId;
+  const payload = {
+    provider: document.getElementById("dInsProvider").value.trim(),
+    policy_number: document.getElementById("dInsPolicy").value.trim(),
+    policy_type: document.getElementById("dInsType").value,
+    expiry_date: document.getElementById("dInsExpiry").value
+  };
+  const res = await fetch(`${API}/api/v1/vehicles/${vid}/insurance`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) return alert("Failed to save insurance");
+  await refreshAllData(vid);
+  openDetailsModal(vid);
+}
+
+async function saveHistoryEntry() {
+  const vid = state.activeDetailsVehicleId;
+  const summary = document.getElementById("hSummary").value.trim();
+  if (!summary) return alert("Enter a short summary of service or repair.");
+  const payload = {
+    date: document.getElementById("hDate").value,
+    record_type: "SERVICE",
+    odometer_km: Number(document.getElementById("hOdo").value) || null,
+    summary,
+    cost_inr: Number(document.getElementById("hCost").value) || null
+  };
+  const res = await fetch(`${API}/api/v1/vehicles/${vid}/history`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) return alert("Failed to add history");
+  document.getElementById("hSummary").value = "";
+  document.getElementById("hCost").value = "";
+  await refreshAllData(vid);
+  openDetailsModal(vid);
+}
+
+// --- SCAN ---
+function renderScanChecklist() {
+  const el = document.getElementById("scanChecklist");
+  el.innerHTML = state.scanItems
+    .map((item, idx) => `
+      <div class="scan-item">
+        <div class="scan-item-top">
+          <strong style="font-size:13px;">${item.label}</strong>
+          <div class="seg-group">
+            <button type="button" class="seg-btn ok ${item.status === "OK" ? "active" : ""}" onclick="setScanStatus(${idx}, 'OK')">OK</button>
+            <button type="button" class="seg-btn check ${item.status === "CHECK" ? "active" : ""}" onclick="setScanStatus(${idx}, 'CHECK')">Check</button>
+            <button type="button" class="seg-btn alert ${item.status === "ALERT" ? "active" : ""}" onclick="setScanStatus(${idx}, 'ALERT')">Alert</button>
+          </div>
+        </div>
+      </div>
+    `)
+    .join("");
+}
+
+function setScanStatus(idx, status) {
+  state.scanItems[idx].status = status;
+  renderScanChecklist();
+}
+
+async function runScan() {
+  const vid = document.getElementById("scanVehicleSelect").value;
+  if (!vid) return openAddVehicleModal("scan");
+  const payload = {
+    vehicle_id: vid,
+    trip_distance_km: Number(document.getElementById("scanDist").value) || 100,
+    is_ghat_route: document.getElementById("scanGhat").value === "true",
+    items: state.scanItems
+  };
+  const res = await fetch(`${API}/api/v1/scans`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
   const data = await res.json();
-  if (!res.ok) {
-    alert(data.detail || "Scan error");
-    return;
-  }
-
-  state.scanId = data.scan_id;
-  state.readinessScore = data.readiness_score;
-  state.overallStatus = data.overall_status;
-
-  document.getElementById("readinessScoreText").textContent = `${data.readiness_score}%`;
-  const badge = document.getElementById("readinessBadge");
-  badge.textContent = data.overall_status;
-  badge.className = `badge ${data.overall_status === "READY" ? "ok" : data.overall_status === "URGENT_CHECK" ? "err" : "warn"}`;
-
-  const box = document.getElementById("advisoriesBox");
-  box.innerHTML = data.advisories.length
-    ? data.advisories.map((a) => `<div class="banner warn" style="margin-bottom:8px;"><strong>${a.title}</strong> (${a.urgency})<br/>${a.plain_explanation}</div>`).join("")
-    : `<div class="banner ok">No advisories generated.</div>`;
-}
-
-async function submitTrip() {
-  const payload = {
-    vehicle_id: state.vehicleId,
-    origin: document.getElementById("origin").value,
-    destination: document.getElementById("destination").value,
-    route_type: document.getElementById("routeType").value,
-    departure_at: new Date(Date.now() + 86400000).toISOString(),
-    opt_in_trip_protection: document.getElementById("optProtection").checked,
-    protection_disclaimer_acknowledged: document.getElementById("ackProtection").checked
-  };
-
-  const res = await fetch(`${API_BASE}/api/v1/trips`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    alert(data.detail || "Trip error");
-    return;
-  }
-
-  state.tripId = data.trip_id;
-  document.getElementById("offlinePackBox").innerHTML = `
-    <div class="banner ok">
-      <strong>Offline Trip Pack Cached (${data.trip_id})</strong><br/>
-      Protection status: ${data.protection_status}<br/>
-      Cached workshops: ${data.cached_workshops.length} • Emergency contact: ${data.emergency_contact}
+  if (!res.ok) return alert(data.detail || "Scan failed");
+  const cls = data.overall_status === "READY" ? "ok" : data.overall_status === "URGENT_CHECK" ? "err" : "warn";
+  document.getElementById("scanOutput").innerHTML = `
+    <div class="banner ${cls}">
+      <strong>Readiness: ${data.readiness_score}% (${data.overall_status})</strong>
+      ${data.advisories.map((a) => `<div style="margin-top:6px;">• <strong>${a.title}:</strong> ${a.plain_explanation}</div>`).join("") || "<div style='margin-top:4px;'>All checks look good.</div>"}
     </div>
   `;
+  await refreshAllData(vid);
 }
 
-async function triggerSos() {
+// --- TRIPS & SOS ---
+async function saveTrip() {
+  const vid = document.getElementById("tripVehicleSelect").value;
+  if (!vid) return openAddVehicleModal("trips");
   const payload = {
-    trip_id: state.tripId,
-    latitude: 12.4244,
-    longitude: 75.7382,
-    issue_summary: "Pilot SOS test (low/no signal)",
+    user_id: state.user.user_id,
+    vehicle_id: vid,
+    origin: document.getElementById("tripOrigin").value.trim(),
+    destination: document.getElementById("tripDest").value.trim(),
+    route_type: document.getElementById("tripRouteType").value,
+    departure_at: document.getElementById("tripDate").value || new Date().toISOString().slice(0, 10),
+    opt_in_trip_protection: document.getElementById("tripProtection").checked,
+    protection_disclaimer_acknowledged: document.getElementById("tripProtAck").checked
+  };
+  const res = await fetch(`${API}/api/v1/trips`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!res.ok) return alert(data.detail || "Trip save failed");
+  document.getElementById("tripNotice").innerHTML = `<div class="banner ok">Trip saved & offline safety pack cached (${data.cached_workshops.length} workshops cached).</div>`;
+  await refreshAllData(vid);
+}
+
+function renderTripsList() {
+  const el = document.getElementById("tripsList");
+  if (!state.trips.length) {
+    el.innerHTML = `<p class="sub">No trips planned yet.</p>`;
+    return;
+  }
+  el.innerHTML = state.trips
+    .map((t) => {
+      const v = vehicleById(t.vehicle_id);
+      const vLabel = v ? `${v.normalized_scanned_plate} (${v.make} ${v.model})` : t.vehicle_id;
+      return `
+        <div class="list-item">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong>${t.origin} → ${t.destination}</strong>
+            <span class="badge info">${t.route_type}</span>
+          </div>
+          <div class="sub" style="margin-top:4px;">${vLabel} • Departs: ${t.departure_at}</div>
+          <button type="button" class="btn-danger" style="padding:9px; margin-top:8px;" onclick="sendSos('${t.trip_id}')">
+            SOS Alert (Offline SMS Fallback)
+          </button>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+async function sendSos(tripId) {
+  const payload = {
+    trip_id: tripId,
+    latitude: 12.9716,
+    longitude: 77.5946,
+    issue_summary: "Pilot SOS alert from mobile",
     network_available: false
   };
-  const res = await fetch(`${API_BASE}/api/v1/sos`, {
+  const res = await fetch(`${API}/api/v1/sos`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
   const data = await res.json();
-  document.getElementById("offlinePackBox").innerHTML = `
-    <div class="banner err">
-      <strong>SOS Recorded (${data.delivery_channel})</strong><br/>
-      Notified: ${data.notified_contact} • GPS: ${data.coordinates.lat}, ${data.coordinates.lng}
-    </div>
-  `;
+  alert(`SOS Triggered (${data.delivery_channel})\nNotified: ${data.notified_contact}`);
 }
 
-async function loadWorkshops() {
-  const res = await fetch(`${API_BASE}/api/v1/workshops?vehicle_class=${encodeURIComponent(state.vehicleClass)}`);
+// --- WORKSHOPS & APPOINTMENTS ---
+async function renderWorkshopsForSelected() {
+  const vid = document.getElementById("bookVehicleSelect").value;
+  const v = vehicleById(vid);
+  const query = v ? `?vehicle_class=${encodeURIComponent(v.vehicle_class)}` : "";
+  const res = await fetch(`${API}/api/v1/workshops${query}`);
   const list = await res.json();
-  const container = document.getElementById("workshopsList");
-  container.innerHTML = list.map((w) => `
-    <div class="workshop-item ${w.workshop_id === state.selectedWorkshopId ? "selected" : ""}">
-      <strong>${w.name}</strong> (${w.distance_km} km)<br/>
-      <span class="sub">${w.area || ""} • Supports: ${w.supported_classes.join(", ")}</span>
-      <button type="button" class="btn-secondary" onclick="selectAndBook('${w.workshop_id}')">
-        Select & Request Slot
-      </button>
-    </div>
-  `).join("");
+  document.getElementById("workshopsList").innerHTML = list
+    .map((w) => `
+      <div class="list-item">
+        <div style="display:flex; justify-content:space-between;">
+          <strong>${w.name}</strong>
+          <span class="badge ok">★ ${w.rating}</span>
+        </div>
+        <div class="sub">${w.area} • ${w.distance_km} km • ${w.supported_classes.join(", ")}</div>
+        <button type="button" class="btn-primary" style="padding:9px; margin-top:8px;" onclick="bookSlot('${w.workshop_id}')">
+          Request Appointment
+        </button>
+      </div>
+    `)
+    .join("");
 }
 
-async function selectAndBook(workshopId) {
-  state.selectedWorkshopId = workshopId;
+async function bookSlot(workshopId) {
+  const vid = document.getElementById("bookVehicleSelect").value;
+  if (!vid) return openAddVehicleModal("service");
   const payload = {
-    vehicle_id: state.vehicleId,
+    user_id: state.user.user_id,
+    vehicle_id: vid,
     workshop_id: workshopId,
-    preferred_slot: document.getElementById("bookingSlot").value,
-    scan_id: state.scanId,
-    attach_scan_summary: document.getElementById("attachScanSummary").checked,
-    notes: "Submitted via TripGuard Phase 1 UI"
+    preferred_slot: document.getElementById("bookSlot").value.trim(),
+    attach_scan_summary: document.getElementById("bookAttachScan").checked,
+    notes: document.getElementById("bookNotes").value.trim() || null
   };
-  const res = await fetch(`${API_BASE}/api/v1/bookings`, {
+  const res = await fetch(`${API}/api/v1/bookings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
   const data = await res.json();
-  if (!res.ok) {
-    alert(data.detail || "Booking error");
+  if (!res.ok) return alert(data.detail || "Booking failed");
+  document.getElementById("bookingNotice").innerHTML = `<div class="banner ok">Appointment request sent to ${data.workshop.name} for ${data.preferred_slot}.</div>`;
+  await refreshAllData(vid);
+}
+
+function renderBookingsList() {
+  const el = document.getElementById("bookingsList");
+  if (!state.bookings.length) {
+    el.innerHTML = `<p class="sub">No appointments requested yet.</p>`;
     return;
   }
-  document.getElementById("bookingResult").innerHTML = `
-    <div class="banner ok">
-      <strong>${data.status}</strong> (${data.booking_id})<br/>
-      Workshop: ${data.workshop.name} • Slot: ${data.preferred_slot}
-    </div>
-  `;
+  el.innerHTML = state.bookings
+    .map((b) => {
+      const v = vehicleById(b.vehicle_id);
+      const vLabel = v ? `${v.normalized_scanned_plate} • ${v.make} ${v.model}` : b.vehicle_id;
+      return `
+        <div class="list-item">
+          <div style="display:flex; justify-content:space-between;">
+            <strong>${b.workshop.name}</strong>
+            <span class="badge ok">${b.status}</span>
+          </div>
+          <div class="sub" style="margin-top:4px;">${vLabel} • ${b.preferred_slot}</div>
+        </div>
+      `;
+    })
+    .join("");
 }
 
-let latestShareText = "";
-
-async function refreshShareCard() {
-  const masked = document.getElementById("maskPrivacy").checked;
-  const url = `${API_BASE}/api/v1/share-card/${encodeURIComponent(state.vehicleId)}?trip_id=${encodeURIComponent(state.tripId)}&hide_sensitive=${masked}`;
-  const res = await fetch(url);
+// --- SHARE CARD ---
+async function loadShareCard() {
+  const vid = document.getElementById("shareVehicleSelect").value;
+  if (!vid) return;
+  const masked = document.getElementById("shareMask").checked;
+  const res = await fetch(`${API}/api/v1/share-card/${encodeURIComponent(vid)}?hide_sensitive=${masked}`);
   if (!res.ok) return;
-  const data = await res.json();
-  latestShareText = data.share_text;
-  document.getElementById("cardVehicle").textContent = data.vehicle_label;
-  document.getElementById("cardRoute").textContent = data.trip_summary;
-  document.getElementById("cardBadge").textContent = `${state.readinessScore}% • ${data.readiness_badge}`;
-  document.getElementById("cardHighlights").innerHTML = data.highlights.map((h) => `<li>${h}</li>`).join("");
+  const d = await res.json();
+  state.latestShareText = d.share_text;
+  document.getElementById("shareScore").textContent = `${d.readiness_score}%`;
+  document.getElementById("shareBadge").textContent = d.readiness_badge;
+  document.getElementById("shareVehTitle").textContent = d.vehicle_label;
+  document.getElementById("shareTripText").textContent = d.trip_summary;
+  document.getElementById("shareHighlights").innerHTML = d.highlights.map((h) => `<li>${h}</li>`).join("");
 }
 
-function copyShareText() {
-  if (!latestShareText) return;
-  navigator.clipboard?.writeText(latestShareText);
-  alert("Copied share text:\n" + latestShareText);
+async function shareNow() {
+  if (!state.latestShareText) return;
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: "TripGuard Readiness Card", text: state.latestShareText });
+      return;
+    } catch {}
+  }
+  await navigator.clipboard?.writeText(state.latestShareText);
+  alert("Copied share card summary:\n\n" + state.latestShareText);
 }
 
-checkApi();
+init();

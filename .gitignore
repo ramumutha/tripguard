@@ -4,6 +4,7 @@
 .venv/
 venv/
 env/
+cloudflared/
 .env
 *.db
 .DS_Store

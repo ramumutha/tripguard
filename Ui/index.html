@@ -3,232 +3,359 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TripGuard — Phase 1 UI</title>
+  <title>TripGuard — Mobile App</title>
   <link rel="stylesheet" href="/app/styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <h1>TripGuard</h1>
-    <span class="api-pill" id="apiStatus">API: checking…</span>
-  </header>
-
-  <main class="wrap">
-    <!-- SCREEN 1: ADD VEHICLE (RC + PLATE CHECK) -->
-    <section id="screen-1" class="screen active">
-      <div class="card">
-        <h2>1. Add Vehicle</h2>
-        <p class="sub">Upload RC and scan number plate to auto-fill and check for plate mismatch.</p>
-
-        <label>Vehicle Class</label>
-        <div class="chips" id="classChips">
-          <button type="button" class="chip" data-val="2W">2-Wheeler</button>
-          <button type="button" class="chip active" data-val="4W">Car / SUV</button>
-          <button type="button" class="chip" data-val="COMMERCIAL">Commercial</button>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-logo">TG</div>
+        <div>
+          <h1>TripGuard</h1>
+          <small id="apiStatus">Connecting…</small>
         </div>
-
-        <div class="grid2">
-          <div>
-            <label>RC Upload (Photo)</label>
-            <input type="file" id="rcFile" accept="image/*" />
-            <label>RC Reg. Number</label>
-            <input id="rcPlate" value="KA 01 AB 1234" />
-          </div>
-          <div>
-            <label>Plate Scan (Photo)</label>
-            <input type="file" id="plateFile" accept="image/*" capture="environment" />
-            <label>Scanned Plate No.</label>
-            <input id="scannedPlate" value="KA 01 AB 1284" />
-          </div>
-        </div>
-
-        <div id="mismatchBanner" class="banner warn" style="display:none; margin-top:10px;">
-          <strong id="mismatchTitle">Plate number doesn't match RC</strong>
-          <div id="mismatchMsg" style="margin-top:4px;"></div>
-        </div>
-
-        <div class="grid2">
-          <div><label>Owner Name</label><input id="ownerName" value="Pilot Driver" /></div>
-          <div><label>Emergency Contact</label><input id="emergencyContact" value="+91 98765 43210" /></div>
-        </div>
-        <div class="grid2">
-          <div><label>Make</label><input id="make" value="Tata" /></div>
-          <div><label>Model</label><input id="model" value="Nexon EV Max" /></div>
-        </div>
-        <div class="grid2">
-          <div><label>Year</label><input id="year" type="number" value="2024" /></div>
-          <div>
-            <label>Fuel Type</label>
-            <select id="fuelType">
-              <option value="EV" selected>EV</option>
-              <option value="PETROL">PETROL</option>
-              <option value="DIESEL">DIESEL</option>
-              <option value="HYBRID">HYBRID</option>
-              <option value="CNG">CNG</option>
-            </select>
-          </div>
-        </div>
-        <div class="grid2">
-          <div><label>Odometer (km)</label><input id="odometer" type="number" value="14820" /></div>
-          <div><label>Last Service (km ago)</label><input id="lastServiceKm" type="number" value="4200" /></div>
-        </div>
-
-        <label class="check-row">
-          <input type="checkbox" id="acceptDisclaimer" checked />
-          <span>I understand this is an advisory check, not an official RTO/VAHAN check, and OCR/scans can misread text.</span>
-        </label>
-
-        <div class="disclaimer">
-          Disclaimer: Extracted RC/plate info is for profile convenience and basic consistency checks only. Not an official RTO/VAHAN or legal authority.
-        </div>
-
-        <button type="button" class="btn-primary" onclick="submitVehicle()">Save Vehicle & Continue →</button>
       </div>
-    </section>
+      <button type="button" id="userChip" class="user-chip" style="display:none;" onclick="logout()">Sign Out</button>
+    </header>
 
-    <!-- SCREEN 2: PRE-TRIP HEALTH SCAN -->
-    <section id="screen-2" class="screen">
-      <div class="card">
-        <h2>2. Pre-Trip Health Scan</h2>
-        <p class="sub" id="scanVehicleHeader">Vehicle: veh_demo_4w</p>
-
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span class="badge warn" id="readinessBadge">Readiness: Pending</span>
-          <strong id="readinessScoreText">--%</strong>
+    <main class="wrap">
+      <!-- AUTH / LOGIN SCREEN -->
+      <section id="screen-auth" class="screen active">
+        <div class="auth-hero">
+          <h2>Ready before every drive</h2>
+          <p>Manage all your household vehicles, insurance, service history, pre-trip checks, offline SOS, and workshop slots in one place.</p>
         </div>
 
-        <div class="grid2" style="margin-top:8px;">
-          <div><label>Trip Distance (km)</label><input id="tripDistance" type="number" value="268" /></div>
-          <div>
-            <label>Ghat Route?</label>
-            <select id="isGhat">
-              <option value="true" selected>Yes (Ghat / Hills)</option>
-              <option value="false">No</option>
-            </select>
+        <div class="card">
+          <h2>Sign In or Create Account</h2>
+          <p class="sub">Use your mobile number or email ID. Multiple vehicles can be added to your profile.</p>
+
+          <label>Your Name</label>
+          <input id="loginName" placeholder="e.g., Ramu" />
+
+          <label>Mobile Number or Email ID</label>
+          <input id="loginIdentifier" placeholder="e.g., +919876543210 or you@email.com" />
+
+          <div id="otpBox" style="display:none;">
+            <label>Enter Verification OTP (Pilot Demo OTP: 1234)</label>
+            <input id="loginOtp" value="1234" maxlength="6" />
+          </div>
+
+          <button type="button" id="btnSendOtp" class="btn-primary" onclick="requestOtp()">Continue with OTP</button>
+          <button type="button" id="btnVerifyOtp" class="btn-primary" style="display:none;" onclick="verifyAndLogin()">Verify & Enter Garage</button>
+          <button type="button" class="btn-secondary" onclick="quickDemoLogin()">Try Seeded Demo Account</button>
+        </div>
+      </section>
+
+      <!-- TAB 1: GARAGE (MULTI-VEHICLE + INSURANCE + HISTORY) -->
+      <section id="screen-garage" class="screen">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>My Garage</h2>
+              <p class="sub">Add 2-wheelers, cars, or commercial vehicles with insurance & history.</p>
+            </div>
+            <button type="button" class="btn-inline" onclick="openAddVehicleModal('garage')">+ Add Vehicle</button>
+          </div>
+          <div id="garageList"></div>
+        </div>
+      </section>
+
+      <!-- TAB 2: PRE-TRIP HEALTH SCAN -->
+      <section id="screen-scan" class="screen">
+        <div class="card">
+          <h2>Pre-Trip Health Scan</h2>
+          <p class="sub">Select a vehicle (or add one now) to run a quick readiness scan.</p>
+
+          <label>Select Vehicle</label>
+          <div class="picker-row">
+            <select id="scanVehicleSelect"></select>
+            <button type="button" class="btn-inline" onclick="openAddVehicleModal('scan')">+ New</button>
+          </div>
+
+          <div class="grid2">
+            <div><label>Trip Distance (km)</label><input id="scanDist" type="number" value="220" /></div>
+            <div>
+              <label>Route Terrain</label>
+              <select id="scanGhat">
+                <option value="false">City / Highway</option>
+                <option value="true" selected>Ghat / Hills</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="scanChecklist"></div>
+
+          <label>Capture / Attach Photo (Tyre, Cluster, Fluid)</label>
+          <input type="file" id="scanPhoto" accept="image/*" capture="environment" />
+
+          <button type="button" class="btn-primary" onclick="runScan()">Calculate Readiness Score</button>
+          <div id="scanOutput"></div>
+
+          <div class="disclaimer">
+            Advisory guidance only — not a certified mechanical inspection or safety guarantee.
           </div>
         </div>
+      </section>
 
-        <label>Tyres & Tread / Pressure</label>
-        <select id="itemTyres">
-          <option value="ALERT" selected>Alert — Low pressure / tread wear</option>
-          <option value="CHECK">Check — Needs close look</option>
-          <option value="OK">OK — Normal</option>
-        </select>
+      <!-- TAB 3: TRIPS & OFFLINE SOS -->
+      <section id="screen-trips" class="screen">
+        <div class="card">
+          <h2>Plan Trip & Offline Safety</h2>
+          <p class="sub">Save trip plans independently per vehicle with offline emergency kit.</p>
 
-        <label>Coolant / Thermal / Brake Fluid</label>
-        <select id="itemFluids">
-          <option value="CHECK" selected>Check — Near minimum level</option>
-          <option value="ALERT">Alert — Urgent fluid issue</option>
-          <option value="OK">OK — Normal</option>
-        </select>
+          <label>Select Vehicle</label>
+          <div class="picker-row">
+            <select id="tripVehicleSelect"></select>
+            <button type="button" class="btn-inline" onclick="openAddVehicleModal('trips')">+ New</button>
+          </div>
 
-        <label>Lights, Horn & Brakes Check</label>
-        <select id="itemBrakesLights">
-          <option value="OK" selected>OK — Working properly</option>
-          <option value="CHECK">Check — Inspect soon</option>
-          <option value="ALERT">Alert — Fault detected</option>
-        </select>
+          <div class="grid2">
+            <div><label>Origin</label><input id="tripOrigin" value="Bengaluru" /></div>
+            <div><label>Destination</label><input id="tripDest" value="Madikeri, Coorg" /></div>
+          </div>
 
-        <label>Attach Scan Photo (Optional)</label>
-        <input type="file" id="scanPhoto" accept="image/*" capture="environment" />
+          <div class="grid2">
+            <div>
+              <label>Route Type</label>
+              <select id="tripRouteType">
+                <option value="GHAT" selected>Ghat & Hills</option>
+                <option value="HIGHWAY">Highway</option>
+                <option value="LONG_RIDE">Long Ride</option>
+                <option value="CITY">City</option>
+              </select>
+            </div>
+            <div>
+              <label>Departure Date</label>
+              <input id="tripDate" type="date" />
+            </div>
+          </div>
 
-        <div id="advisoriesBox" style="margin-top:10px;"></div>
-        <div class="disclaimer">
-          Disclaimer: Health scan scores and advisories are informational guidance only, not a certified safety inspection.
+          <label class="check-row">
+            <input type="checkbox" id="tripProtection" />
+            <span>Opt-in to Optional Trip / Roadside Protection Add-On</span>
+          </label>
+          <label class="check-row">
+            <input type="checkbox" id="tripProtAck" checked />
+            <span>I understand optional protection is subject to partner terms & exclusions.</span>
+          </label>
+
+          <button type="button" class="btn-primary" onclick="saveTrip()">Save Trip & Cache Offline Pack</button>
+          <div id="tripNotice"></div>
         </div>
 
-        <button type="button" class="btn-primary" onclick="submitScan()">Run Health Scan</button>
-        <button type="button" class="btn-secondary" onclick="goScreen(3)">Go to Trip & Offline Safety →</button>
-      </div>
-    </section>
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3>My Planned Trips & SOS</h3>
+              <p class="sub">Trigger no-network SMS fallback SOS for any saved trip.</p>
+            </div>
+          </div>
+          <div id="tripsList"></div>
+        </div>
+      </section>
 
-    <!-- SCREEN 3: PLAN TRIP, PROTECTION & OFFLINE SOS -->
-    <section id="screen-3" class="screen">
-      <div class="card">
-        <h2>3. Plan Trip & Offline Safety</h2>
-        <p class="sub">Cache trip safety data locally and trigger SOS fallback if network drops.</p>
+      <!-- TAB 4: WORKSHOPS & APPOINTMENTS -->
+      <section id="screen-service" class="screen">
+        <div class="card">
+          <h2>Book Workshop Appointment</h2>
+          <p class="sub">Pick a registered vehicle or register one right here to request a slot.</p>
 
-        <div class="grid2">
-          <div><label>Origin</label><input id="origin" value="Bengaluru (HSR Layout)" /></div>
-          <div><label>Destination</label><input id="destination" value="Madikeri, Coorg" /></div>
+          <label>Select Vehicle</label>
+          <div class="picker-row">
+            <select id="bookVehicleSelect" onchange="renderWorkshopsForSelected()"></select>
+            <button type="button" class="btn-inline" onclick="openAddVehicleModal('service')">+ New</button>
+          </div>
+
+          <div class="grid2">
+            <div><label>Preferred Slot</label><input id="bookSlot" value="Tomorrow, 10:30 AM" /></div>
+            <div><label>Notes</label><input id="bookNotes" placeholder="e.g., Tyre & brake check" /></div>
+          </div>
+
+          <label class="check-row">
+            <input type="checkbox" id="bookAttachScan" checked />
+            <span>Attach latest pre-trip scan summary</span>
+          </label>
+
+          <div id="workshopsList" style="margin-top:10px;"></div>
+          <div id="bookingNotice"></div>
         </div>
 
-        <label>Route Type</label>
-        <select id="routeType">
-          <option value="GHAT" selected>Ghat & Highway</option>
-          <option value="HIGHWAY">Express Highway</option>
-          <option value="LONG_RIDE">Long Ride</option>
-          <option value="CITY">City</option>
-        </select>
-
-        <label class="check-row">
-          <input type="checkbox" id="optProtection" />
-          <span><strong>Optional Trip / Roadside Protection Add-On</strong> (opt-in only)</span>
-        </label>
-        <label class="check-row">
-          <input type="checkbox" id="ackProtection" checked />
-          <span>Acknowledge protection terms & disclaimer</span>
-        </label>
-        <div class="disclaimer">
-          Disclaimer: Optional trip/roadside protection is subject to partner terms, exclusions, and applicable rules; not a guarantee against breakdowns.
+        <div class="card">
+          <h3>My Appointments</h3>
+          <div id="bookingsList"></div>
         </div>
+      </section>
 
-        <button type="button" class="btn-primary" onclick="submitTrip()">Save & Cache Offline Pack</button>
-        <button type="button" class="btn-danger" onclick="triggerSos()">SOS Alert (No-Network SMS Fallback)</button>
+      <!-- TAB 5: SHAREABLE TRIP CARD -->
+      <section id="screen-share" class="screen">
+        <div class="card">
+          <h2>Share Readiness Card</h2>
+          <p class="sub">Privacy-masked summary for WhatsApp, family, or riding groups.</p>
 
-        <div id="offlinePackBox" style="margin-top:10px;"></div>
-      </div>
-    </section>
+          <label>Select Vehicle</label>
+          <select id="shareVehicleSelect" onchange="loadShareCard()"></select>
 
-    <!-- SCREEN 4: SERVICE ADVISORIES & WORKSHOPS -->
-    <section id="screen-4" class="screen">
-      <div class="card">
-        <h2>4. Service Advisories & Workshops</h2>
-        <p class="sub">Request a pre-briefed workshop slot with your scan summary.</p>
+          <label class="check-row">
+            <input type="checkbox" id="shareMask" checked onchange="loadShareCard()" />
+            <span>Mask registration plate & hide odometer/contact details</span>
+          </label>
 
-        <label>Preferred Slot</label>
-        <input id="bookingSlot" value="Tomorrow, 10:30 AM" />
+          <div class="share-card-dark" style="margin-top:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:12px; opacity:0.85;">TRIPGUARD VERIFIED PREP</span>
+              <span class="badge ok" id="shareBadge">READY</span>
+            </div>
+            <div class="score-big" id="shareScore">--%</div>
+            <strong id="shareVehTitle">Select a vehicle</strong>
+            <div style="font-size:12.5px; color:#cbd5e1; margin-top:4px;" id="shareTripText"></div>
+            <ul id="shareHighlights"></ul>
+            <div style="font-size:10.5px; opacity:0.75;">Advisory check only — not an official RTO/VAHAN or safety guarantee.</div>
+          </div>
 
-        <label class="check-row">
-          <input type="checkbox" id="attachScanSummary" checked />
-          <span>Attach latest pre-trip scan summary to workshop request</span>
-        </label>
-
-        <div id="workshopsList"></div>
-        <div id="bookingResult" style="margin-top:10px;"></div>
-      </div>
-    </section>
-
-    <!-- SCREEN 5: SHAREABLE TRIP CARD -->
-    <section id="screen-5" class="screen">
-      <div class="card">
-        <h2>5. Share Trip Card</h2>
-        <p class="sub">Preview a privacy-safe card for WhatsApp, family, or riding groups.</p>
-
-        <label class="check-row">
-          <input type="checkbox" id="maskPrivacy" checked onchange="refreshShareCard()" />
-          <span>Mask plate & hide odometer / emergency details</span>
-        </label>
-
-        <div class="share-preview" id="sharePreviewCard" style="margin-top:10px;">
-          <div id="cardVehicle">KA 01 •••• 1234 • Tata Nexon EV Max</div>
-          <div id="cardRoute" class="sub">Bengaluru → Madikeri, Coorg (GHAT)</div>
-          <div class="big-score" id="cardBadge">82%</div>
-          <ul id="cardHighlights" style="padding-left:18px; margin:8px 0; font-size:13px;"></ul>
-          <div class="disclaimer">Advisory check only — not an official RTO/VAHAN or safety guarantee.</div>
+          <button type="button" class="btn-primary" onclick="shareNow()">Share / Copy Card</button>
         </div>
+      </section>
+    </main>
 
-        <button type="button" class="btn-primary" onclick="copyShareText()">Copy Share Summary</button>
+    <!-- BOTTOM TAB BAR -->
+    <nav id="bottomNav" class="bottom-nav">
+      <button type="button" class="nav-btn active" data-tab="garage" onclick="goTab('garage')">
+        <span class="nav-icon">🚗</span><span>Garage</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="scan" onclick="goTab('scan')">
+        <span class="nav-icon">🩺</span><span>Scan</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="trips" onclick="goTab('trips')">
+        <span class="nav-icon">🗺️</span><span>Trips</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="service" onclick="goTab('service')">
+        <span class="nav-icon">🔧</span><span>Service</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="share" onclick="goTab('share')">
+        <span class="nav-icon">📤</span><span>Share</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- INLINE MODAL: ADD NEW VEHICLE (Works from Garage, Scan, Trips, or Service) -->
+  <div id="addVehicleModal" class="modal-backdrop">
+    <div class="modal-sheet">
+      <div class="card-head">
+        <div>
+          <h2>Register Vehicle</h2>
+          <p class="sub">Added straight to your garage & selected automatically.</p>
+        </div>
+        <button type="button" class="btn-inline" onclick="closeModal('addVehicleModal')">Close</button>
       </div>
-    </section>
-  </main>
 
-  <nav class="bottom-nav">
-    <button type="button" class="nav-btn active" onclick="goScreen(1)">1. Vehicle</button>
-    <button type="button" class="nav-btn" onclick="goScreen(2)">2. Scan</button>
-    <button type="button" class="nav-btn" onclick="goScreen(3)">3. Trip/SOS</button>
-    <button type="button" class="nav-btn" onclick="goScreen(4)">4. Service</button>
-    <button type="button" class="nav-btn" onclick="goScreen(5)">5. Share</button>
-  </nav>
+      <label>Vehicle Class</label>
+      <div class="chips" id="modalClassChips">
+        <button type="button" class="chip" data-val="2W">2-Wheeler</button>
+        <button type="button" class="chip active" data-val="4W">Car / SUV</button>
+        <button type="button" class="chip" data-val="COMMERCIAL">Commercial</button>
+      </div>
+
+      <div class="grid2">
+        <div>
+          <label>RC Photo</label>
+          <input type="file" accept="image/*" />
+          <label>RC Number</label>
+          <input id="mRcPlate" placeholder="KA 01 AB 1234" />
+        </div>
+        <div>
+          <label>Plate Photo</label>
+          <input type="file" accept="image/*" capture="environment" />
+          <label>Scanned Plate No.</label>
+          <input id="mScanPlate" placeholder="KA 01 AB 1234" />
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div><label>Make</label><input id="mMake" placeholder="e.g., Hyundai" /></div>
+        <div><label>Model</label><input id="mModel" placeholder="e.g., Creta" /></div>
+      </div>
+      <div class="grid2">
+        <div><label>Year</label><input id="mYear" type="number" value="2024" /></div>
+        <div>
+          <label>Fuel Type</label>
+          <select id="mFuel">
+            <option value="PETROL">PETROL</option>
+            <option value="DIESEL">DIESEL</option>
+            <option value="EV">EV</option>
+            <option value="HYBRID">HYBRID</option>
+            <option value="CNG">CNG</option>
+          </select>
+        </div>
+      </div>
+      <div class="grid2">
+        <div><label>Odometer (km)</label><input id="mOdo" type="number" value="12000" /></div>
+        <div><label>Emergency Contact</label><input id="mEmerg" value="+91 98765 00112" /></div>
+      </div>
+
+      <label>Insurance Details (Optional — can add later)</label>
+      <div class="grid2">
+        <input id="mInsProvider" placeholder="Insurer (e.g., Acko)" />
+        <input id="mInsExpiry" type="date" />
+      </div>
+
+      <label class="check-row">
+        <input type="checkbox" id="mDisclaimer" checked />
+        <span>I understand RC/plate checks are advisory only (not official RTO/VAHAN).</span>
+      </label>
+
+      <div id="mVehicleError"></div>
+      <button type="button" class="btn-primary" onclick="submitNewVehicle()">Save Vehicle</button>
+    </div>
+  </div>
+
+  <!-- MODAL: INSURANCE & VEHICLE HISTORY -->
+  <div id="detailsModal" class="modal-backdrop">
+    <div class="modal-sheet">
+      <div class="card-head">
+        <div>
+          <h2 id="detailsTitle">Vehicle Details</h2>
+          <p class="sub" id="detailsSub"></p>
+        </div>
+        <button type="button" class="btn-inline" onclick="closeModal('detailsModal')">Close</button>
+      </div>
+
+      <h3>Insurance Policy</h3>
+      <div class="grid2">
+        <div><label>Provider</label><input id="dInsProvider" placeholder="e.g., HDFC ERGO" /></div>
+        <div><label>Policy Number</label><input id="dInsPolicy" placeholder="POL-12345" /></div>
+      </div>
+      <div class="grid2">
+        <div>
+          <label>Type</label>
+          <select id="dInsType">
+            <option value="COMPREHENSIVE">Comprehensive</option>
+            <option value="ZERO_DEP">Zero Dep</option>
+            <option value="THIRD_PARTY">Third Party</option>
+          </select>
+        </div>
+        <div><label>Expiry Date</label><input id="dInsExpiry" type="date" /></div>
+      </div>
+      <button type="button" class="btn-secondary" onclick="saveInsurance()">Save Insurance</button>
+
+      <hr style="border:none; border-top:1px solid #e2e8f0; margin:16px 0;" />
+
+      <h3>Add Service / Maintenance History</h3>
+      <div class="grid2">
+        <div><label>Date</label><input id="hDate" type="date" /></div>
+        <div><label>Odometer (km)</label><input id="hOdo" type="number" placeholder="15000" /></div>
+      </div>
+      <label>Work Done / Summary</label>
+      <input id="hSummary" placeholder="e.g., Oil change, tyre rotation, brake pads" />
+      <label>Cost (INR, optional)</label>
+      <input id="hCost" type="number" placeholder="3500" />
+      <button type="button" class="btn-primary" onclick="saveHistoryEntry()">Add History Record</button>
+
+      <h3 style="margin-top:16px;">Timeline</h3>
+      <div id="detailsHistoryList"></div>
+    </div>
+  </div>
 
   <script src="/app/app.js"></script>
 </body>
