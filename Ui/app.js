@@ -52,7 +52,7 @@ function setupOcrUploaders() {
       const file = e.target.files && e.target.files[0];
       if (!file) return;
       showImagePreview(file, "mPlatePreview");
-      setOcrStatus("mPlateStatus", `Selected "${file.name}" — scanning plate...`, "info");
+      setOcrStatus("mPlateStatus", `Selected "${file.name}" — detecting plate...`, "info");
       await extractFromPlateImage(file);
     });
   }
@@ -87,36 +87,8 @@ function showImagePreview(file, containerId) {
   reader.readAsDataURL(file);
 }
 
-function preprocessImageForOcr(file, scaleFactor = 2) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const w = Math.min(2200, Math.max(700, img.width * scaleFactor));
-          const h = Math.round((img.height / img.width) * w);
-          const canvas = document.createElement("canvas");
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext("2d");
-          ctx.filter = "grayscale(1) contrast(1.5)";
-          ctx.drawImage(img, 0, 0, w, h);
-          canvas.toBlob((blob) => resolve(blob || file), "image/png");
-        } catch {
-          resolve(file);
-        }
-      };
-      img.onerror = () => resolve(file);
-      img.src = reader.result;
-    };
-    reader.onerror = () => resolve(file);
-    reader.readAsDataURL(file);
-  });
-}
-
-function normalizeOcrPlate(rawText) {
-  const upper = (rawText || "").toUpperCase();
+function formatIndianPlate(raw) {
+  const upper = (raw || "").toUpperCase();
   const compact = upper.replace(/[^A-Z0-9]/g, " ");
   const indMatch = compact.match(/\b([A-Z]{2})\s*0?([0-9]{1,2})\s*([A-Z]{1,3})\s*([0-9]{3,4})\b/);
   if (indMatch) {
@@ -124,100 +96,124 @@ function normalizeOcrPlate(rawText) {
   }
   const alnum = upper.replace(/[^A-Z0-9]/g, "");
   const fallback = alnum.match(/[A-Z]{2}[0-9]{1,2}[A-Z]{1,3}[0-9]{3,4}/);
-  return fallback ? fallback[0] : "";
+  return fallback ? fallback[0] : alnum;
 }
 
-async function runTesseractOcr(file) {
-  if (!window.Tesseract || typeof window.Tesseract.recognize !== "function") {
-    throw new Error("OCR engine not loaded (Tesseract unavailable).");
+async function callBackendPlateRecognizer(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API}/api/v1/ocr/plate`, {
+    method: "POST",
+    body: form
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Plate API status ${res.status}`);
   }
-  const processed = await preprocessImageForOcr(file);
-  const { data } = await window.Tesseract.recognize(processed, "eng");
-  return data.text || "";
+  return await res.json();
+}
+
+function createCroppedBlob(img, sxRatio, syRatio, swRatio, shRatio) {
+  return new Promise((resolve) => {
+    try {
+      const sx = Math.max(0, Math.round(img.width * sxRatio));
+      const sy = Math.max(0, Math.round(img.height * syRatio));
+      const sw = Math.max(10, Math.round(img.width * swRatio));
+      const sh = Math.max(10, Math.round(img.height * shRatio));
+      const scale = Math.min(4, Math.max(2, 1200 / sw));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(sw * scale);
+      canvas.height = Math.round(sh * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.filter = "grayscale(1) contrast(1.6)";
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => resolve(blob), "image/png");
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function runFallbackTesseract(file) {
+  if (!window.Tesseract || typeof window.Tesseract.recognize !== "function") {
+    return "";
+  }
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+  const img = await new Promise((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = reject;
+    im.src = dataUrl;
+  });
+
+  const crops = [
+    await createCroppedBlob(img, 0.2, 0.25, 0.6, 0.45),
+    await createCroppedBlob(img, 0.15, 0.45, 0.7, 0.5),
+    file
+  ].filter(Boolean);
+
+  for (const crop of crops) {
+    const { data } = await window.Tesseract.recognize(crop, "eng");
+    const plate = formatIndianPlate(data.text || "");
+    if (plate && /^[A-Z]{2}\s?\d{2}\s?[A-Z]{1,3}\s?\d{3,4}$/.test(plate)) {
+      return plate;
+    }
+  }
+  return "";
 }
 
 async function extractFromPlateImage(file) {
   const plateInput = document.getElementById("mScanPlate");
+  const makeEl = document.getElementById("mMake");
+
   try {
-    const text = await runTesseractOcr(file);
-    console.log("[TripGuard Plate OCR raw text]:", text);
-    let detected = normalizeOcrPlate(text);
-    if (!detected && file.name) {
-      detected = normalizeOcrPlate(file.name);
-    }
-    if (detected) {
-      plateInput.value = detected;
+    const apiResult = await callBackendPlateRecognizer(file);
+    if (apiResult && apiResult.plate) {
+      const formatted = formatIndianPlate(apiResult.plate);
+      if (plateInput) plateInput.value = formatted;
       const rcInput = document.getElementById("mRcPlate");
-      if (rcInput && !rcInput.value.trim()) {
-        rcInput.value = detected;
+      if (rcInput && !rcInput.value.trim()) rcInput.value = formatted;
+      if (makeEl && !makeEl.value.trim() && apiResult.make) {
+        makeEl.value = apiResult.make;
       }
-      setOcrStatus("mPlateStatus", `Detected plate: ${detected} (please verify)`, "ok");
-    } else {
-      setOcrStatus("mPlateStatus", "No clear plate number read — please type manually.", "warn");
+      const pct = apiResult.score ? ` (${Math.round(apiResult.score * 100)}% match)` : "";
+      setOcrStatus("mPlateStatus", `Detected plate: ${formatted}${pct}`, "ok");
+      return;
     }
-  } catch (err) {
-    console.warn("[TripGuard Plate OCR error]:", err);
-    const fromName = file.name ? normalizeOcrPlate(file.name) : "";
-    if (fromName && plateInput) {
-      plateInput.value = fromName;
-      setOcrStatus("mPlateStatus", `OCR offline; filled from filename: ${fromName}`, "warn");
+  } catch (apiErr) {
+    console.info("[TripGuard Plate API fallback]:", apiErr.message);
+  }
+
+  try {
+    const fallbackPlate = await runFallbackTesseract(file);
+    if (fallbackPlate) {
+      if (plateInput) plateInput.value = fallbackPlate;
+      setOcrStatus("mPlateStatus", `Detected plate (local scan): ${fallbackPlate} — verify`, "ok");
     } else {
-      setOcrStatus("mPlateStatus", `${err.message || "OCR unavailable"} — type plate manually.`, "warn");
+      setOcrStatus("mPlateStatus", "Configure Plate Recognizer token or enter plate manually.", "warn");
     }
+  } catch {
+    setOcrStatus("mPlateStatus", "Could not auto-read plate — please type number manually.", "warn");
   }
 }
 
 async function extractFromRcImage(file) {
   const rcInput = document.getElementById("mRcPlate");
   try {
-    const text = await runTesseractOcr(file);
-    console.log("[TripGuard RC OCR raw text]:", text);
-    const upper = text.toUpperCase();
-    let detectedPlate = normalizeOcrPlate(upper);
-    if (!detectedPlate && file.name) {
-      detectedPlate = normalizeOcrPlate(file.name);
-    }
-    if (detectedPlate && rcInput) {
-      rcInput.value = detectedPlate;
-    }
-
-    const makeEl = document.getElementById("mMake");
-    const fuelEl = document.getElementById("mFuel");
-    const yearEl = document.getElementById("mYear");
-
-    const knownMakes = [
-      "TATA", "MARUTI", "SUZUKI", "HYUNDAI", "MAHINDRA", "KIA",
-      "TOYOTA", "HONDA", "ROYAL ENFIELD", "BAJAJ", "TVS", "ATHER",
-      "OLA", "MG", "SKODA", "VOLKSWAGEN"
-    ];
-    if (makeEl && !makeEl.value.trim()) {
-      const foundMake = knownMakes.find((m) => upper.includes(m));
-      if (foundMake) {
-        makeEl.value = foundMake.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
-      }
-    }
-
-    if (fuelEl) {
-      if (/\bEV\b|ELECTRIC/.test(upper)) fuelEl.value = "EV";
-      else if (/DIESEL/.test(upper)) fuelEl.value = "DIESEL";
-      else if (/PETROL/.test(upper)) fuelEl.value = "PETROL";
-      else if (/HYBRID/.test(upper)) fuelEl.value = "HYBRID";
-      else if (/CNG/.test(upper)) fuelEl.value = "CNG";
-    }
-
-    const yearMatch = upper.match(/\b(20[0-2][0-9]|199[0-9])\b/);
-    if (yearEl && yearMatch) {
-      yearEl.value = yearMatch[1];
-    }
-
-    if (detectedPlate) {
-      setOcrStatus("mRcStatus", `Extracted RC: ${detectedPlate} (verify fields)`, "ok");
+    const plate = await runFallbackTesseract(file);
+    if (plate && rcInput) {
+      rcInput.value = plate;
+      setOcrStatus("mRcStatus", `Extracted RC number: ${plate} — verify details`, "ok");
     } else {
-      setOcrStatus("mRcStatus", "RC scanned — no reg. number found; verify manually.", "warn");
+      setOcrStatus("mRcStatus", "Could not read RC cleanly — please enter details manually.", "warn");
     }
-  } catch (err) {
-    console.warn("[TripGuard RC OCR error]:", err);
-    setOcrStatus("mRcStatus", `${err.message || "OCR unavailable"} — enter RC details manually.`, "warn");
+  } catch {
+    setOcrStatus("mRcStatus", "Could not read RC cleanly — please enter details manually.", "warn");
   }
 }
 

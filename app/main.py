@@ -1,31 +1,48 @@
-﻿from datetime import date
-from typing import List, Optional
+﻿import os
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Query
+from typing import List, Optional
+from urllib import request as urlrequest
+from urllib.error import URLError
+
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.schemas import (
-    AdvisoryItem,
+    AuthLoginRequest,
+    AuthUser,
     BookingCreate,
     BookingRecord,
     InsuranceInfo,
-    LoginRequest,
     ScanCreate,
     ScanRecord,
-    SosRecord,
-    SosRequest,
+    ShareCardResponse,
+    SosCreate,
+    SosEvent,
     TripCreate,
     TripRecord,
-    UserProfile,
     VehicleCreate,
-    VehicleHistoryCreate,
     VehicleHistoryEntry,
     VehicleRecord,
     Workshop,
 )
-from app.store import mask_plate, normalize_plate, store, utc_now
+from app.store import (
+    create_booking,
+    create_scan,
+    create_sos,
+    create_trip,
+    create_vehicle,
+    get_share_card,
+    get_vehicle,
+    list_bookings,
+    list_trips,
+    list_vehicles,
+    list_workshops,
+    login_or_register_user,
+    update_vehicle_insurance,
+    add_vehicle_history,
+)
 
 app = FastAPI(title="TripGuard Phase 1 API", version="2.0.0")
 
@@ -37,348 +54,180 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ui_dir = Path("ui") if Path("ui").is_dir() else Path("Ui")
-app.mount("/app", StaticFiles(directory=str(ui_dir), html=True), name="ui")
+_ui_dir = Path("ui") if Path("ui").is_dir() else Path("Ui")
+app.mount("/app", StaticFiles(directory=str(_ui_dir), html=True), name="ui")
 
 
-@app.get("/", include_in_schema=False)
-def root_redirect():
+@app.get("/")
+def root():
     return RedirectResponse(url="/app/")
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "tripguard-api", "version": "2.0.0"}
+    return {
+        "status": "ok",
+        "service": "tripguard-api",
+        "version": "2.0.0",
+        "plate_recognizer_configured": bool(os.getenv("PLATERECOGNIZER_API_TOKEN", "").strip()),
+    }
 
 
-# --- AUTH / ACCOUNT ---
-@app.post("/api/v1/auth/login", response_model=UserProfile)
-def login_or_register(payload: LoginRequest):
-    user = store.find_or_create_user(payload.identifier, payload.name)
-    return user
+@app.post("/api/v1/ocr/plate")
+async def recognize_plate_image(file: UploadFile = File(...)):
+    token = os.getenv("PLATERECOGNIZER_API_TOKEN", "").strip()
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail="PLATERECOGNIZER_API_TOKEN is not configured on the server.",
+        )
 
+    raw_bytes = await file.read()
+    if not raw_bytes:
+        raise HTTPException(status_code=400, detail="Empty image upload.")
 
-# --- VEHICLES + INSURANCE + HISTORY ---
-@app.get("/api/v1/vehicles", response_model=List[VehicleRecord])
-def list_vehicles(user_id: Optional[str] = Query(default=None)):
-    vehicles = list(store.data["vehicles"].values())
-    if user_id:
-        vehicles = [v for v in vehicles if v.get("user_id") == user_id]
-    return vehicles
+    boundary = "----TripGuardBoundary7MA4YWxkTrZu0gW"
+    filename = file.filename or "plate.png"
+    content_type = file.content_type or "image/png"
 
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="upload"; filename="{filename}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode("utf-8") + raw_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
 
-@app.post("/api/v1/vehicles", response_model=VehicleRecord)
-def create_vehicle(payload: VehicleCreate):
-    if not payload.accepts_advisory_disclaimer:
-        raise HTTPException(status_code=400, detail="Advisory disclaimer must be accepted.")
-    if payload.user_id not in store.data["users"]:
-        raise HTTPException(status_code=404, detail="User account not found. Please sign in again.")
-
-    norm_rc = normalize_plate(payload.rc_registration_number)
-    norm_plate = normalize_plate(payload.plate_scanned_number)
-    mismatch = norm_rc != norm_plate
-    notice = (
-        f"Mismatch detected: RC ({norm_rc}) vs Plate ({norm_plate}). Verify characters or re-scan. Advisory only; not official RTO/VAHAN."
-        if mismatch
-        else "RC and scanned plate match (advisory check only; not official RTO/VAHAN)."
+    req = urlrequest.Request(
+        "https://api.platerecognizer.com/v1/plate-reader/",
+        data=body,
+        headers={
+            "Authorization": f"Token {token}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
     )
 
-    vid = store.new_id("veh")
-    record = {
-        "vehicle_id": vid,
-        "user_id": payload.user_id,
-        "owner_name": payload.owner_name,
-        "emergency_contact": payload.emergency_contact,
-        "vehicle_class": payload.vehicle_class,
-        "make": payload.make,
-        "model": payload.model,
-        "year": payload.year,
-        "fuel_type": payload.fuel_type,
-        "odometer_km": payload.odometer_km,
-        "last_service_km_ago": payload.last_service_km_ago,
-        "normalized_rc": norm_rc,
-        "normalized_scanned_plate": norm_plate,
-        "plate_mismatch": mismatch,
-        "verification_notice": notice,
-        "insurance": payload.insurance.model_dump() if payload.insurance else None,
-        "history": [],
-        "created_at": utc_now(),
+    try:
+        with urlrequest.urlopen(req, timeout=20) as resp:
+            import json
+
+            payload = json.loads(resp.read().decode("utf-8"))
+    except URLError as exc:
+        raise HTTPException(status_code=502, detail=f"Plate Recognizer request failed: {exc}") from exc
+
+    results = payload.get("results") or []
+    if not results:
+        return {"plate": None, "make": None, "score": 0.0}
+
+    top = results[0]
+    raw_plate = (top.get("plate") or "").upper().strip()
+    score = float(top.get("score") or 0.0)
+
+    make_guess = None
+    vehicle_info = top.get("vehicle") or {}
+    if isinstance(vehicle_info, dict):
+        make_guess = vehicle_info.get("make")
+
+    return {
+        "plate": raw_plate or None,
+        "make": make_guess,
+        "score": score,
     }
-    store.data["vehicles"][vid] = record
-    store.save()
-    return record
+
+
+@app.post("/api/v1/auth/login", response_model=AuthUser)
+def auth_login(payload: AuthLoginRequest):
+    return login_or_register_user(payload)
+
+
+@app.get("/api/v1/vehicles", response_model=List[VehicleRecord])
+def get_vehicles(user_id: Optional[str] = Query(default=None)):
+    return list_vehicles(user_id=user_id)
+
+
+@app.post("/api/v1/vehicles", response_model=VehicleRecord, status_code=201)
+def add_vehicle(payload: VehicleCreate):
+    try:
+        return create_vehicle(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/vehicles/{vehicle_id}", response_model=VehicleRecord)
+def read_vehicle(vehicle_id: str):
+    v = get_vehicle(vehicle_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    return v
 
 
 @app.put("/api/v1/vehicles/{vehicle_id}/insurance", response_model=VehicleRecord)
-def upsert_insurance(vehicle_id: str, payload: InsuranceInfo):
-    vehicle = store.data["vehicles"].get(vehicle_id)
-    if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found.")
-    vehicle["insurance"] = payload.model_dump()
-    vehicle["history"].insert(
-        0,
-        {
-            "entry_id": store.new_id("hist"),
-            "date": date.today().isoformat(),
-            "record_type": "INSURANCE",
-            "odometer_km": vehicle["odometer_km"],
-            "summary": f"Insurance updated: {payload.provider} ({payload.policy_type}), valid till {payload.expiry_date}",
-            "cost_inr": None,
-        },
-    )
-    store.save()
-    return vehicle
+def put_vehicle_insurance(vehicle_id: str, payload: InsuranceInfo):
+    try:
+        return update_vehicle_insurance(vehicle_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Vehicle not found") from exc
 
 
-@app.post("/api/v1/vehicles/{vehicle_id}/history", response_model=VehicleHistoryEntry)
-def add_vehicle_history(vehicle_id: str, payload: VehicleHistoryCreate):
-    vehicle = store.data["vehicles"].get(vehicle_id)
-    if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found.")
-    entry = {"entry_id": store.new_id("hist"), **payload.model_dump()}
-    vehicle["history"].insert(0, entry)
-    if payload.odometer_km and payload.odometer_km > vehicle["odometer_km"]:
-        vehicle["odometer_km"] = payload.odometer_km
-    store.save()
-    return entry
+@app.post("/api/v1/vehicles/{vehicle_id}/history", response_model=VehicleRecord)
+def post_vehicle_history(vehicle_id: str, payload: VehicleHistoryEntry):
+    try:
+        return add_vehicle_history(vehicle_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Vehicle not found") from exc
 
 
-# --- PRE-TRIP HEALTH SCANS ---
-@app.get("/api/v1/scans", response_model=List[ScanRecord])
-def list_scans(vehicle_id: Optional[str] = None):
-    scans = list(store.data["scans"].values())
-    if vehicle_id:
-        scans = [s for s in scans if s["vehicle_id"] == vehicle_id]
-    return list(reversed(scans))
+@app.post("/api/v1/scans", response_model=ScanRecord, status_code=201)
+def post_scan(payload: ScanCreate):
+    try:
+        return create_scan(payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Vehicle not found") from exc
 
 
-@app.post("/api/v1/scans", response_model=ScanRecord)
-def create_scan(payload: ScanCreate):
-    vehicle = store.data["vehicles"].get(payload.vehicle_id)
-    if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found.")
-
-    score = 100
-    advisories: List[AdvisoryItem] = []
-
-    for item in payload.items:
-        if item.status == "ALERT":
-            score -= 22
-            advisories.append(
-                AdvisoryItem(
-                    title=f"{item.label}: Immediate Attention",
-                    urgency="HIGH",
-                    plain_explanation=item.note or f"Resolve {item.label.lower()} before starting your {payload.trip_distance_km} km drive.",
-                )
-            )
-        elif item.status == "CHECK":
-            score -= 10
-            advisories.append(
-                AdvisoryItem(
-                    title=f"{item.label}: Quick Check Recommended",
-                    urgency="MEDIUM",
-                    plain_explanation=item.note or f"Inspect {item.label.lower()} at a nearby bay before highway or ghat travel.",
-                )
-            )
-
-    if payload.is_ghat_route and score < 90:
-        score -= 5
-        advisories.append(
-            AdvisoryItem(
-                title="Ghat Route Extra Precaution",
-                urgency="MEDIUM",
-                plain_explanation="Hill descents stress brakes, tyres, and coolingâ€”verify grip and brake feel before climbing.",
-            )
-        )
-
-    score = max(20, min(100, score))
-    overall = "READY" if score >= 85 else ("CHECK_RECOMMENDED" if score >= 65 else "URGENT_CHECK")
-
-    sid = store.new_id("scan")
-    scan = {
-        "scan_id": sid,
-        "vehicle_id": payload.vehicle_id,
-        "trip_distance_km": payload.trip_distance_km,
-        "is_ghat_route": payload.is_ghat_route,
-        "readiness_score": score,
-        "overall_status": overall,
-        "advisories": [a.model_dump() for a in advisories],
-        "items": [i.model_dump() for i in payload.items],
-        "created_at": utc_now(),
-    }
-    store.data["scans"][sid] = scan
-    vehicle["history"].insert(
-        0,
-        {
-            "entry_id": store.new_id("hist"),
-            "date": date.today().isoformat(),
-            "record_type": "SCAN",
-            "odometer_km": vehicle["odometer_km"],
-            "summary": f"Pre-trip scan ({payload.trip_distance_km} km): {score}% â€” {overall}",
-            "cost_inr": None,
-        },
-    )
-    store.save()
-    return scan
-
-
-# --- TRIPS & OFFLINE SOS ---
 @app.get("/api/v1/trips", response_model=List[TripRecord])
-def list_trips(user_id: Optional[str] = None):
-    trips = list(store.data["trips"].values())
-    if user_id:
-        trips = [t for t in trips if t.get("user_id") == user_id]
-    return list(reversed(trips))
+def get_trips(user_id: Optional[str] = Query(default=None)):
+    return list_trips(user_id=user_id)
 
 
-@app.post("/api/v1/trips", response_model=TripRecord)
-def create_trip(payload: TripCreate):
-    vehicle = store.data["vehicles"].get(payload.vehicle_id)
-    if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found.")
-    if payload.opt_in_trip_protection and not payload.protection_disclaimer_acknowledged:
-        raise HTTPException(status_code=400, detail="Protection disclaimer must be acknowledged.")
-
-    tid = store.new_id("trip")
-    trip = {
-        "trip_id": tid,
-        "user_id": payload.user_id,
-        "vehicle_id": payload.vehicle_id,
-        "origin": payload.origin,
-        "destination": payload.destination,
-        "route_type": payload.route_type,
-        "departure_at": payload.departure_at,
-        "protection_status": "OPTED_IN_PENDING_PARTNER" if payload.opt_in_trip_protection else "NOT_SELECTED",
-        "emergency_contact": vehicle["emergency_contact"],
-        "cached_workshops": store.get_workshops(vehicle["vehicle_class"]),
-        "created_at": utc_now(),
-    }
-    store.data["trips"][tid] = trip
-    store.save()
-    return trip
+@app.post("/api/v1/trips", response_model=TripRecord, status_code=201)
+def post_trip(payload: TripCreate):
+    try:
+        return create_trip(payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Vehicle not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/v1/sos", response_model=SosRecord)
-def create_sos(payload: SosRequest):
-    trip = store.data["trips"].get(payload.trip_id)
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found. Create a trip first.")
-    event = {
-        "sos_id": store.new_id("sos"),
-        "trip_id": payload.trip_id,
-        "vehicle_id": trip["vehicle_id"],
-        "delivery_channel": "LIVE_API" if payload.network_available else "QUEUED_SMS_FALLBACK",
-        "notified_contact": trip["emergency_contact"],
-        "coordinates": {"lat": payload.latitude, "lng": payload.longitude},
-        "issue_summary": payload.issue_summary,
-        "created_at": utc_now(),
-    }
-    store.data["sos_events"].append(event)
-    store.save()
-    return event
+@app.post("/api/v1/sos", response_model=SosEvent, status_code=201)
+def post_sos(payload: SosCreate):
+    try:
+        return create_sos(payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Trip or vehicle not found") from exc
 
 
-# --- WORKSHOPS & APPOINTMENTS ---
 @app.get("/api/v1/workshops", response_model=List[Workshop])
-def list_workshops(vehicle_class: Optional[str] = None):
-    return store.get_workshops(vehicle_class)
+def get_workshops(vehicle_class: Optional[str] = Query(default=None)):
+    return list_workshops(vehicle_class=vehicle_class)
 
 
 @app.get("/api/v1/bookings", response_model=List[BookingRecord])
-def list_bookings(user_id: Optional[str] = None):
-    bookings = list(store.data["bookings"].values())
-    if user_id:
-        bookings = [b for b in bookings if b.get("user_id") == user_id]
-    return list(reversed(bookings))
+def get_bookings(user_id: Optional[str] = Query(default=None)):
+    return list_bookings(user_id=user_id)
 
 
-@app.post("/api/v1/bookings", response_model=BookingRecord)
-def create_booking(payload: BookingCreate):
-    vehicle = store.data["vehicles"].get(payload.vehicle_id)
-    if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found.")
-    workshop = store.get_workshop(payload.workshop_id)
-    if not workshop:
-        raise HTTPException(status_code=404, detail="Workshop not found.")
-
-    bid = store.new_id("bkg")
-    booking = {
-        "booking_id": bid,
-        "user_id": payload.user_id,
-        "vehicle_id": payload.vehicle_id,
-        "workshop": workshop,
-        "preferred_slot": payload.preferred_slot,
-        "scan_id": payload.scan_id,
-        "attach_scan_summary": payload.attach_scan_summary,
-        "notes": payload.notes,
-        "status": "REQUEST_SENT",
-        "created_at": utc_now(),
-    }
-    store.data["bookings"][bid] = booking
-    vehicle["history"].insert(
-        0,
-        {
-            "entry_id": store.new_id("hist"),
-            "date": date.today().isoformat(),
-            "record_type": "BOOKING",
-            "odometer_km": vehicle["odometer_km"],
-            "summary": f"Appointment requested at {workshop['name']} ({payload.preferred_slot})",
-            "cost_inr": None,
-        },
-    )
-    store.save()
-    return booking
+@app.post("/api/v1/bookings", response_model=BookingRecord, status_code=201)
+def post_booking(payload: BookingCreate):
+    try:
+        return create_booking(payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Vehicle or workshop not found") from exc
 
 
-# --- SHAREABLE TRIP CARD ---
-@app.get("/api/v1/share-card/{vehicle_id}")
-def get_share_card(vehicle_id: str, trip_id: Optional[str] = None, hide_sensitive: bool = True):
-    vehicle = store.data["vehicles"].get(vehicle_id)
-    if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found.")
-
-    plate_display = mask_plate(vehicle["normalized_scanned_plate"]) if hide_sensitive else vehicle["normalized_scanned_plate"]
-    scans = [s for s in store.data["scans"].values() if s["vehicle_id"] == vehicle_id]
-    latest_scan = scans[-1] if scans else None
-
-    trip = store.data["trips"].get(trip_id) if trip_id else None
-    if not trip:
-        user_trips = [t for t in store.data["trips"].values() if t["vehicle_id"] == vehicle_id]
-        trip = user_trips[-1] if user_trips else None
-
-    score = latest_scan["readiness_score"] if latest_scan else 88
-    badge = latest_scan["overall_status"] if latest_scan else "READY"
-    trip_summary = (
-        f"{trip['origin']} â†’ {trip['destination']} ({trip['route_type']})"
-        if trip
-        else "Upcoming Society / Weekend Drive"
-    )
-    ins = vehicle.get("insurance")
-    highlights = [
-        f"RC vs Plate: {'Mismatch Flagged' if vehicle['plate_mismatch'] else 'Matched'}",
-        f"Insurance: {ins['provider']} (Valid till {ins['expiry_date']})" if ins and ins.get("expiry_date") else "Insurance: Not added yet",
-        f"Pre-Trip Scan: {score}% ({badge})",
-    ]
-    if not hide_sensitive:
-        highlights.append(f"Odometer: {vehicle['odometer_km']} km")
-
-    share_text = (
-        f"TripGuard Readiness Card\n"
-        f"Vehicle: {plate_display} ({vehicle['make']} {vehicle['model']})\n"
-        f"Trip: {trip_summary}\n"
-        f"Score: {score}% [{badge}]\n"
-        f"(Advisory check only â€” not an official RTO/VAHAN or safety guarantee)"
-    )
-
-    return {
-        "vehicle_label": f"{plate_display} â€¢ {vehicle['make']} {vehicle['model']}",
-        "vehicle_class": vehicle["vehicle_class"],
-        "trip_summary": trip_summary,
-        "readiness_score": score,
-        "readiness_badge": badge,
-        "highlights": highlights,
-        "share_text": share_text,
-    }
-_ui_dir = Path("ui") if Path("ui").is_dir() else Path("Ui")
-app.mount("/app", StaticFiles(directory=str(_ui_dir), html=True), name="ui")
-
+@app.get("/api/v1/share-card/{vehicle_id}", response_model=ShareCardResponse)
+def read_share_card(vehicle_id: str, hide_sensitive: bool = Query(default=True)):
+    try:
+        return get_share_card(vehicle_id=vehicle_id, hide_sensitive=hide_sensitive)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Vehicle not found") from exc
