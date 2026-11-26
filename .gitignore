@@ -8,3 +8,5 @@ cloudflared/
 .env
 *.db
 .DS_Store
+
+data/

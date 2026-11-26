@@ -1,5 +1,6 @@
 from datetime import date
 from typing import List, Optional
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
@@ -36,7 +37,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/app", StaticFiles(directory="ui", html=True), name="ui")
+ui_dir = Path("ui") if Path("ui").is_dir() else Path("Ui")
+app.mount("/app", StaticFiles(directory=str(ui_dir), html=True), name="ui")
 
 
 @app.get("/", include_in_schema=False)
