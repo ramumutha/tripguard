@@ -1,4 +1,4 @@
-const API = window.location.origin;
+﻿const API = window.location.origin;
 
 const state = {
   user: JSON.parse(localStorage.getItem("tg_user") || "null"),
@@ -18,8 +18,11 @@ const state = {
 };
 
 async function init() {
-  document.getElementById("tripDate").value = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-  document.getElementById("hDate").value = new Date().toISOString().slice(0, 10);
+  const tripDateEl = document.getElementById("tripDate");
+  const hDateEl = document.getElementById("hDate");
+  if (tripDateEl) tripDateEl.value = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  if (hDateEl) hDateEl.value = new Date().toISOString().slice(0, 10);
+
   setupModalChips();
   setupOcrUploaders();
   renderScanChecklist();
@@ -40,7 +43,6 @@ async function checkHealth() {
   }
 }
 
-// --- OCR UPLOAD & EXTRACTION ---
 function setupOcrUploaders() {
   const rcInput = document.getElementById("mRcFile");
   const plateInput = document.getElementById("mPlateFile");
@@ -50,6 +52,7 @@ function setupOcrUploaders() {
       const file = e.target.files && e.target.files[0];
       if (!file) return;
       showImagePreview(file, "mPlatePreview");
+      setOcrStatus("mPlateStatus", `Selected "${file.name}" — scanning plate...`, "info");
       await extractFromPlateImage(file);
     });
   }
@@ -59,46 +62,56 @@ function setupOcrUploaders() {
       const file = e.target.files && e.target.files[0];
       if (!file) return;
       showImagePreview(file, "mRcPreview");
+      setOcrStatus("mRcStatus", `Selected "${file.name}" — scanning RC...`, "info");
       await extractFromRcImage(file);
     });
   }
 }
 
+function setOcrStatus(elId, msg, type = "info") {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const color = type === "ok" ? "#166534" : type === "warn" ? "#92400e" : "#1d4ed8";
+  el.style.color = color;
+  el.style.fontWeight = "600";
+  el.textContent = msg;
+}
+
 function showImagePreview(file, containerId) {
   const el = document.getElementById(containerId);
   if (!el) return;
-  const url = URL.createObjectURL(file);
-  el.innerHTML = `<img src="${url}" alt="Preview" style="width:100%; max-height:96px; object-fit:cover; border-radius:8px; border:1px solid #cbd5e1;" />`;
+  const reader = new FileReader();
+  reader.onload = () => {
+    el.innerHTML = `<img src="${reader.result}" alt="Preview" style="width:100%; max-height:96px; object-fit:contain; background:#f8fafc; border-radius:8px; border:1px solid #cbd5e1;" />`;
+  };
+  reader.readAsDataURL(file);
 }
 
 function preprocessImageForOcr(file, scaleFactor = 2) {
   return new Promise((resolve) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      try {
-        const w = Math.min(2200, Math.max(600, img.width * scaleFactor));
-        const h = Math.round((img.height / img.width) * w);
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        ctx.filter = "grayscale(1) contrast(1.45)";
-        ctx.drawImage(img, 0, 0, w, h);
-        canvas.toBlob((blob) => {
-          URL.revokeObjectURL(url);
-          resolve(blob || file);
-        }, "image/png");
-      } catch {
-        URL.revokeObjectURL(url);
-        resolve(file);
-      }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const w = Math.min(2200, Math.max(700, img.width * scaleFactor));
+          const h = Math.round((img.height / img.width) * w);
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.filter = "grayscale(1) contrast(1.5)";
+          ctx.drawImage(img, 0, 0, w, h);
+          canvas.toBlob((blob) => resolve(blob || file), "image/png");
+        } catch {
+          resolve(file);
+        }
+      };
+      img.onerror = () => resolve(file);
+      img.src = reader.result;
     };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      resolve(file);
-    };
-    img.src = url;
+    reader.onerror = () => resolve(file);
+    reader.readAsDataURL(file);
   });
 }
 
@@ -115,8 +128,8 @@ function normalizeOcrPlate(rawText) {
 }
 
 async function runTesseractOcr(file) {
-  if (!window.Tesseract) {
-    throw new Error("OCR library not loaded (check internet connection).");
+  if (!window.Tesseract || typeof window.Tesseract.recognize !== "function") {
+    throw new Error("OCR engine not loaded (Tesseract unavailable).");
   }
   const processed = await preprocessImageForOcr(file);
   const { data } = await window.Tesseract.recognize(processed, "eng");
@@ -124,36 +137,47 @@ async function runTesseractOcr(file) {
 }
 
 async function extractFromPlateImage(file) {
-  const statusEl = document.getElementById("mPlateStatus");
   const plateInput = document.getElementById("mScanPlate");
-  statusEl.textContent = "Scanning license plate...";
   try {
     const text = await runTesseractOcr(file);
-    const detected = normalizeOcrPlate(text);
+    console.log("[TripGuard Plate OCR raw text]:", text);
+    let detected = normalizeOcrPlate(text);
+    if (!detected && file.name) {
+      detected = normalizeOcrPlate(file.name);
+    }
     if (detected) {
       plateInput.value = detected;
       const rcInput = document.getElementById("mRcPlate");
       if (rcInput && !rcInput.value.trim()) {
         rcInput.value = detected;
       }
-      statusEl.textContent = `Detected plate: ${detected} (please verify)`;
+      setOcrStatus("mPlateStatus", `Detected plate: ${detected} (please verify)`, "ok");
     } else {
-      statusEl.textContent = "Couldn't read plate clearly — please type number manually.";
+      setOcrStatus("mPlateStatus", "No clear plate number read — please type manually.", "warn");
     }
   } catch (err) {
-    statusEl.textContent = err.message || "OCR failed — please type plate manually.";
+    console.warn("[TripGuard Plate OCR error]:", err);
+    const fromName = file.name ? normalizeOcrPlate(file.name) : "";
+    if (fromName && plateInput) {
+      plateInput.value = fromName;
+      setOcrStatus("mPlateStatus", `OCR offline; filled from filename: ${fromName}`, "warn");
+    } else {
+      setOcrStatus("mPlateStatus", `${err.message || "OCR unavailable"} — type plate manually.`, "warn");
+    }
   }
 }
 
 async function extractFromRcImage(file) {
-  const statusEl = document.getElementById("mRcStatus");
   const rcInput = document.getElementById("mRcPlate");
-  statusEl.textContent = "Scanning RC details...";
   try {
     const text = await runTesseractOcr(file);
+    console.log("[TripGuard RC OCR raw text]:", text);
     const upper = text.toUpperCase();
-    const detectedPlate = normalizeOcrPlate(upper);
-    if (detectedPlate) {
+    let detectedPlate = normalizeOcrPlate(upper);
+    if (!detectedPlate && file.name) {
+      detectedPlate = normalizeOcrPlate(file.name);
+    }
+    if (detectedPlate && rcInput) {
       rcInput.value = detectedPlate;
     }
 
@@ -186,15 +210,17 @@ async function extractFromRcImage(file) {
       yearEl.value = yearMatch[1];
     }
 
-    statusEl.textContent = detectedPlate
-      ? `Extracted RC: ${detectedPlate} (verify fields before saving)`
-      : "RC scanned — no clear reg. number found; please verify fields.";
+    if (detectedPlate) {
+      setOcrStatus("mRcStatus", `Extracted RC: ${detectedPlate} (verify fields)`, "ok");
+    } else {
+      setOcrStatus("mRcStatus", "RC scanned — no reg. number found; verify manually.", "warn");
+    }
   } catch (err) {
-    statusEl.textContent = err.message || "RC scan failed — please enter details manually.";
+    console.warn("[TripGuard RC OCR error]:", err);
+    setOcrStatus("mRcStatus", `${err.message || "OCR unavailable"} — enter RC details manually.`, "warn");
   }
 }
 
-// --- AUTH ---
 function requestOtp() {
   const id = document.getElementById("loginIdentifier").value.trim();
   if (id.length < 5) return alert("Enter a valid mobile number or email ID.");
@@ -246,7 +272,6 @@ async function enterApp() {
   goTab("garage");
 }
 
-// --- NAVIGATION ---
 function goTab(tab) {
   document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
   document.getElementById(`screen-${tab}`).classList.add("active");
@@ -257,7 +282,6 @@ function goTab(tab) {
   if (tab === "share") loadShareCard();
 }
 
-// --- DATA SYNC ---
 async function refreshAllData(selectVehicleId = null) {
   const uid = encodeURIComponent(state.user.user_id);
   const [vRes, tRes, bRes] = await Promise.all([
@@ -299,7 +323,6 @@ function populateVehiclePickers(forceSelectId = null) {
   });
 }
 
-// --- GARAGE ---
 function renderGarage() {
   const el = document.getElementById("garageList");
   if (!state.vehicles.length) {
@@ -342,7 +365,6 @@ function jumpToScan(vehicleId) {
   goTab("scan");
 }
 
-// --- INLINE ADD VEHICLE MODAL ---
 function setupModalChips() {
   document.querySelectorAll("#modalClassChips .chip").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -416,7 +438,6 @@ async function submitNewVehicle() {
   if (data.plate_mismatch) alert(data.verification_notice);
 }
 
-// --- INSURANCE & HISTORY MODAL ---
 function openDetailsModal(vehicleId) {
   const v = vehicleById(vehicleId);
   if (!v) return;
@@ -495,7 +516,6 @@ async function saveHistoryEntry() {
   openDetailsModal(vid);
 }
 
-// --- SCAN ---
 function renderScanChecklist() {
   const el = document.getElementById("scanChecklist");
   el.innerHTML = state.scanItems
@@ -545,7 +565,6 @@ async function runScan() {
   await refreshAllData(vid);
 }
 
-// --- TRIPS & SOS ---
 async function saveTrip() {
   const vid = document.getElementById("tripVehicleSelect").value;
   if (!vid) return openAddVehicleModal("trips");
@@ -613,7 +632,6 @@ async function sendSos(tripId) {
   alert(`SOS Triggered (${data.delivery_channel})\nNotified: ${data.notified_contact}`);
 }
 
-// --- WORKSHOPS & APPOINTMENTS ---
 async function renderWorkshopsForSelected() {
   const vid = document.getElementById("bookVehicleSelect").value;
   const v = vehicleById(vid);
@@ -681,7 +699,6 @@ function renderBookingsList() {
     .join("");
 }
 
-// --- SHARE CARD ---
 async function loadShareCard() {
   const vid = document.getElementById("shareVehicleSelect").value;
   if (!vid) return;

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -20,7 +20,6 @@
     </header>
 
     <main class="wrap">
-      <!-- AUTH / LOGIN SCREEN -->
       <section id="screen-auth" class="screen active">
         <div class="auth-hero">
           <h2>Ready before every drive</h2>
@@ -48,7 +47,6 @@
         </div>
       </section>
 
-      <!-- TAB 1: GARAGE (MULTI-VEHICLE + INSURANCE + HISTORY) -->
       <section id="screen-garage" class="screen">
         <div class="card">
           <div class="card-head">
@@ -62,7 +60,6 @@
         </div>
       </section>
 
-      <!-- TAB 2: PRE-TRIP HEALTH SCAN -->
       <section id="screen-scan" class="screen">
         <div class="card">
           <h2>Pre-Trip Health Scan</h2>
@@ -99,7 +96,6 @@
         </div>
       </section>
 
-      <!-- TAB 3: TRIPS & OFFLINE SOS -->
       <section id="screen-trips" class="screen">
         <div class="card">
           <h2>Plan Trip & Offline Safety</h2>
@@ -156,7 +152,6 @@
         </div>
       </section>
 
-      <!-- TAB 4: WORKSHOPS & APPOINTMENTS -->
       <section id="screen-service" class="screen">
         <div class="card">
           <h2>Book Workshop Appointment</h2>
@@ -188,7 +183,6 @@
         </div>
       </section>
 
-      <!-- TAB 5: SHAREABLE TRIP CARD -->
       <section id="screen-share" class="screen">
         <div class="card">
           <h2>Share Readiness Card</h2>
@@ -219,7 +213,6 @@
       </section>
     </main>
 
-    <!-- BOTTOM TAB BAR -->
     <nav id="bottomNav" class="bottom-nav">
       <button type="button" class="nav-btn active" data-tab="garage" onclick="goTab('garage')">
         <span class="nav-icon">🚗</span><span>Garage</span>
@@ -239,7 +232,6 @@
     </nav>
   </div>
 
-  <!-- INLINE MODAL: ADD NEW VEHICLE -->
   <div id="addVehicleModal" class="modal-backdrop">
     <div class="modal-sheet">
       <div class="card-head">
@@ -314,7 +306,6 @@
     </div>
   </div>
 
-  <!-- MODAL: INSURANCE & VEHICLE HISTORY -->
   <div id="detailsModal" class="modal-backdrop">
     <div class="modal-sheet">
       <div class="card-head">
@@ -362,6 +353,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="/app/app.js"></script>
+  <script src="/app/app.js?v=4"></script>
 </body>
 </html>
