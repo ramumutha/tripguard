@@ -1,4 +1,4 @@
-from datetime import date
+﻿from datetime import date
 from typing import List, Optional
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
@@ -187,7 +187,7 @@ def create_scan(payload: ScanCreate):
             AdvisoryItem(
                 title="Ghat Route Extra Precaution",
                 urgency="MEDIUM",
-                plain_explanation="Hill descents stress brakes, tyres, and cooling—verify grip and brake feel before climbing.",
+                plain_explanation="Hill descents stress brakes, tyres, and coolingâ€”verify grip and brake feel before climbing.",
             )
         )
 
@@ -214,7 +214,7 @@ def create_scan(payload: ScanCreate):
             "date": date.today().isoformat(),
             "record_type": "SCAN",
             "odometer_km": vehicle["odometer_km"],
-            "summary": f"Pre-trip scan ({payload.trip_distance_km} km): {score}% — {overall}",
+            "summary": f"Pre-trip scan ({payload.trip_distance_km} km): {score}% â€” {overall}",
             "cost_inr": None,
         },
     )
@@ -349,7 +349,7 @@ def get_share_card(vehicle_id: str, trip_id: Optional[str] = None, hide_sensitiv
     score = latest_scan["readiness_score"] if latest_scan else 88
     badge = latest_scan["overall_status"] if latest_scan else "READY"
     trip_summary = (
-        f"{trip['origin']} → {trip['destination']} ({trip['route_type']})"
+        f"{trip['origin']} â†’ {trip['destination']} ({trip['route_type']})"
         if trip
         else "Upcoming Society / Weekend Drive"
     )
@@ -367,11 +367,11 @@ def get_share_card(vehicle_id: str, trip_id: Optional[str] = None, hide_sensitiv
         f"Vehicle: {plate_display} ({vehicle['make']} {vehicle['model']})\n"
         f"Trip: {trip_summary}\n"
         f"Score: {score}% [{badge}]\n"
-        f"(Advisory check only — not an official RTO/VAHAN or safety guarantee)"
+        f"(Advisory check only â€” not an official RTO/VAHAN or safety guarantee)"
     )
 
     return {
-        "vehicle_label": f"{plate_display} • {vehicle['make']} {vehicle['model']}",
+        "vehicle_label": f"{plate_display} â€¢ {vehicle['make']} {vehicle['model']}",
         "vehicle_class": vehicle["vehicle_class"],
         "trip_summary": trip_summary,
         "readiness_score": score,
@@ -379,3 +379,6 @@ def get_share_card(vehicle_id: str, trip_id: Optional[str] = None, hide_sensitiv
         "highlights": highlights,
         "share_text": share_text,
     }
+_ui_dir = Path("ui") if Path("ui").is_dir() else Path("Ui")
+app.mount("/app", StaticFiles(directory=str(_ui_dir), html=True), name="ui")
+
