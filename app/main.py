@@ -1,6 +1,5 @@
 ﻿import json
 import os
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib import request as urlrequest
@@ -68,8 +67,14 @@ def _find_vehicle_raw(vehicle_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _build_vehicle_record(v: Dict[str, Any]) -> VehicleRecord:
-    rc_norm = v.get("normalized_rc_plate") or normalize_plate(v.get("rc_registration_number", ""))
-    scan_norm = v.get("normalized_scanned_plate") or normalize_plate(v.get("plate_scanned_number") or rc_norm)
+    rc_norm = (
+        v.get("normalized_rc")
+        or v.get("normalized_rc_plate")
+        or normalize_plate(v.get("rc_registration_number", ""))
+    )
+    scan_norm = v.get("normalized_scanned_plate") or normalize_plate(
+        v.get("plate_scanned_number") or rc_norm
+    )
     mismatch = bool(v.get("plate_mismatch", rc_norm != scan_norm))
     notice = v.get("verification_notice") or (
         f"RC plate ({rc_norm}) differs from scanned plate ({scan_norm}). Please verify."
@@ -79,6 +84,7 @@ def _build_vehicle_record(v: Dict[str, Any]) -> VehicleRecord:
     ins_data = v.get("insurance")
     ins_obj = InsuranceInfo(**ins_data) if isinstance(ins_data, dict) else None
     hist_objs = [VehicleHistoryEntry(**h) for h in v.get("history", [])]
+
     return VehicleRecord(
         vehicle_id=v["vehicle_id"],
         user_id=v["user_id"],
@@ -90,9 +96,8 @@ def _build_vehicle_record(v: Dict[str, Any]) -> VehicleRecord:
         year=int(v.get("year", 2024)),
         fuel_type=v.get("fuel_type", "PETROL"),
         odometer_km=int(v.get("odometer_km", 0)),
-        rc_registration_number=v["rc_registration_number"],
-        plate_scanned_number=v.get("plate_scanned_number") or v["rc_registration_number"],
-        normalized_rc_plate=rc_norm,
+        last_service_km_ago=v.get("last_service_km_ago"),
+        normalized_rc=rc_norm,
         normalized_scanned_plate=scan_norm,
         plate_mismatch=mismatch,
         verification_notice=notice,
@@ -232,9 +237,8 @@ def add_vehicle(payload: VehicleCreate):
         "year": payload.year,
         "fuel_type": payload.fuel_type,
         "odometer_km": payload.odometer_km,
-        "rc_registration_number": payload.rc_registration_number,
-        "plate_scanned_number": scan_plate_raw,
-        "normalized_rc_plate": rc_norm,
+        "last_service_km_ago": None,
+        "normalized_rc": rc_norm,
         "normalized_scanned_plate": scan_norm,
         "plate_mismatch": mismatch,
         "verification_notice": notice,
@@ -332,19 +336,19 @@ def post_scan(payload: ScanCreate):
     if score >= 80:
         overall = "READY"
     elif score >= 55:
-        overall = "CAUTION"
+        overall = "CHECK_RECOMMENDED"
     else:
         overall = "URGENT_CHECK"
 
     scan_rec = ScanRecord(
         scan_id=db.new_id("scn"),
         vehicle_id=payload.vehicle_id,
-        readiness_score=score,
-        overall_status=overall,
         trip_distance_km=payload.trip_distance_km,
         is_ghat_route=payload.is_ghat_route,
-        items=payload.items,
+        readiness_score=score,
+        overall_status=overall,
         advisories=advisories,
+        items=payload.items,
         created_at=utc_now(),
     )
     db.data["scans"].append(scan_rec.model_dump())
@@ -370,6 +374,7 @@ def post_trip(payload: TripCreate):
 
     veh_rec = _build_vehicle_record(v)
     cached_ws = db.get_workshops(vehicle_class=veh_rec.vehicle_class)
+    prot_status = "OPTED_IN_PENDING_PARTNER" if payload.opt_in_trip_protection else "NOT_SELECTED"
 
     trip_rec = TripRecord(
         trip_id=db.new_id("trp"),
@@ -379,11 +384,8 @@ def post_trip(payload: TripCreate):
         destination=payload.destination,
         route_type=payload.route_type,
         departure_at=payload.departure_at,
-        opt_in_trip_protection=payload.opt_in_trip_protection,
-        protection_disclaimer_acknowledged=payload.protection_disclaimer_acknowledged,
-        offline_pack_ready=True,
+        protection_status=prot_status,
         emergency_contact=veh_rec.emergency_contact,
-        vehicle_summary=f"{veh_rec.normalized_scanned_plate} — {veh_rec.make} {veh_rec.model}",
         cached_workshops=cached_ws,
         created_at=utc_now(),
     )
@@ -399,19 +401,16 @@ def post_sos(payload: SosRequest):
         raise HTTPException(status_code=404, detail="Trip not found")
     v = _find_vehicle_raw(trip["vehicle_id"])
     notified = (v or {}).get("emergency_contact") or trip.get("emergency_contact") or "+919876500112"
-    channel = "DATA_PUSH_AND_SMS" if payload.network_available else "OFFLINE_SMS_FALLBACK"
-    sms_text = (
-        f"TRIPGUARD SOS: {trip['origin']} -> {trip['destination']} "
-        f"({trip.get('vehicle_summary', trip['vehicle_id'])}) "
-        f"Loc: {payload.latitude:.4f},{payload.longitude:.4f}. {payload.issue_summary}"
-    )
+    channel = "LIVE_API" if payload.network_available else "QUEUED_SMS_FALLBACK"
+
     sos_rec = SosRecord(
         sos_id=db.new_id("sos"),
         trip_id=payload.trip_id,
         vehicle_id=trip["vehicle_id"],
         delivery_channel=channel,
         notified_contact=notified,
-        sms_payload=sms_text,
+        coordinates={"latitude": payload.latitude, "longitude": payload.longitude},
+        issue_summary=payload.issue_summary,
         created_at=utc_now(),
     )
     db.data["sos_events"].append(sos_rec.model_dump())
@@ -441,11 +440,13 @@ def post_booking(payload: BookingCreate):
     if not ws:
         raise HTTPException(status_code=404, detail="Workshop not found")
 
-    scan_summary = None
+    scan_id: Optional[str] = None
+    scan_summary: Optional[str] = None
     if payload.attach_scan_summary:
         veh_scans = [s for s in db.data.get("scans", []) if s.get("vehicle_id") == payload.vehicle_id]
         if veh_scans:
             latest = veh_scans[-1]
+            scan_id = latest.get("scan_id")
             scan_summary = f"Score {latest['readiness_score']}% ({latest['overall_status']})"
 
     booking_rec = BookingRecord(
@@ -454,9 +455,10 @@ def post_booking(payload: BookingCreate):
         vehicle_id=payload.vehicle_id,
         workshop=ws,
         preferred_slot=payload.preferred_slot,
-        status="REQUESTED",
-        scan_summary=scan_summary,
+        scan_id=scan_id,
+        attach_scan_summary=payload.attach_scan_summary,
         notes=payload.notes,
+        status="REQUEST_SENT",
         created_at=utc_now(),
     )
     db.data["bookings"].append(booking_rec.model_dump())
@@ -479,7 +481,7 @@ def read_share_card(vehicle_id: str, hide_sensitive: bool = Query(default=True))
     veh_trips = [t for t in db.data.get("trips", []) if t.get("vehicle_id") == vehicle_id]
     latest_trip = veh_trips[-1] if veh_trips else None
     trip_summary = (
-        f"{latest_trip['origin']} → {latest_trip['destination']} ({latest_trip['route_type']})"
+        f"{latest_trip['origin']} -> {latest_trip['destination']} ({latest_trip['route_type']})"
         if latest_trip
         else "Local / Society Readiness Check"
     )
