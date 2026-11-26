@@ -17,11 +17,11 @@ const state = {
   ]
 };
 
-// --- INIT ---
 async function init() {
   document.getElementById("tripDate").value = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   document.getElementById("hDate").value = new Date().toISOString().slice(0, 10);
   setupModalChips();
+  setupOcrUploaders();
   renderScanChecklist();
   checkHealth();
 
@@ -37,6 +37,160 @@ async function checkHealth() {
     el.textContent = r.ok ? "Online • Ready" : "API error";
   } catch {
     el.textContent = "Offline";
+  }
+}
+
+// --- OCR UPLOAD & EXTRACTION ---
+function setupOcrUploaders() {
+  const rcInput = document.getElementById("mRcFile");
+  const plateInput = document.getElementById("mPlateFile");
+
+  if (plateInput) {
+    plateInput.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      showImagePreview(file, "mPlatePreview");
+      await extractFromPlateImage(file);
+    });
+  }
+
+  if (rcInput) {
+    rcInput.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      showImagePreview(file, "mRcPreview");
+      await extractFromRcImage(file);
+    });
+  }
+}
+
+function showImagePreview(file, containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const url = URL.createObjectURL(file);
+  el.innerHTML = `<img src="${url}" alt="Preview" style="width:100%; max-height:96px; object-fit:cover; border-radius:8px; border:1px solid #cbd5e1;" />`;
+}
+
+function preprocessImageForOcr(file, scaleFactor = 2) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      try {
+        const w = Math.min(2200, Math.max(600, img.width * scaleFactor));
+        const h = Math.round((img.height / img.width) * w);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.filter = "grayscale(1) contrast(1.45)";
+        ctx.drawImage(img, 0, 0, w, h);
+        canvas.toBlob((blob) => {
+          URL.revokeObjectURL(url);
+          resolve(blob || file);
+        }, "image/png");
+      } catch {
+        URL.revokeObjectURL(url);
+        resolve(file);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(file);
+    };
+    img.src = url;
+  });
+}
+
+function normalizeOcrPlate(rawText) {
+  const upper = (rawText || "").toUpperCase();
+  const compact = upper.replace(/[^A-Z0-9]/g, " ");
+  const indMatch = compact.match(/\b([A-Z]{2})\s*0?([0-9]{1,2})\s*([A-Z]{1,3})\s*([0-9]{3,4})\b/);
+  if (indMatch) {
+    return `${indMatch[1]} ${indMatch[2].padStart(2, "0")} ${indMatch[3]} ${indMatch[4]}`;
+  }
+  const alnum = upper.replace(/[^A-Z0-9]/g, "");
+  const fallback = alnum.match(/[A-Z]{2}[0-9]{1,2}[A-Z]{1,3}[0-9]{3,4}/);
+  return fallback ? fallback[0] : "";
+}
+
+async function runTesseractOcr(file) {
+  if (!window.Tesseract) {
+    throw new Error("OCR library not loaded (check internet connection).");
+  }
+  const processed = await preprocessImageForOcr(file);
+  const { data } = await window.Tesseract.recognize(processed, "eng");
+  return data.text || "";
+}
+
+async function extractFromPlateImage(file) {
+  const statusEl = document.getElementById("mPlateStatus");
+  const plateInput = document.getElementById("mScanPlate");
+  statusEl.textContent = "Scanning license plate...";
+  try {
+    const text = await runTesseractOcr(file);
+    const detected = normalizeOcrPlate(text);
+    if (detected) {
+      plateInput.value = detected;
+      const rcInput = document.getElementById("mRcPlate");
+      if (rcInput && !rcInput.value.trim()) {
+        rcInput.value = detected;
+      }
+      statusEl.textContent = `Detected plate: ${detected} (please verify)`;
+    } else {
+      statusEl.textContent = "Couldn't read plate clearly — please type number manually.";
+    }
+  } catch (err) {
+    statusEl.textContent = err.message || "OCR failed — please type plate manually.";
+  }
+}
+
+async function extractFromRcImage(file) {
+  const statusEl = document.getElementById("mRcStatus");
+  const rcInput = document.getElementById("mRcPlate");
+  statusEl.textContent = "Scanning RC details...";
+  try {
+    const text = await runTesseractOcr(file);
+    const upper = text.toUpperCase();
+    const detectedPlate = normalizeOcrPlate(upper);
+    if (detectedPlate) {
+      rcInput.value = detectedPlate;
+    }
+
+    const makeEl = document.getElementById("mMake");
+    const fuelEl = document.getElementById("mFuel");
+    const yearEl = document.getElementById("mYear");
+
+    const knownMakes = [
+      "TATA", "MARUTI", "SUZUKI", "HYUNDAI", "MAHINDRA", "KIA",
+      "TOYOTA", "HONDA", "ROYAL ENFIELD", "BAJAJ", "TVS", "ATHER",
+      "OLA", "MG", "SKODA", "VOLKSWAGEN"
+    ];
+    if (makeEl && !makeEl.value.trim()) {
+      const foundMake = knownMakes.find((m) => upper.includes(m));
+      if (foundMake) {
+        makeEl.value = foundMake.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+      }
+    }
+
+    if (fuelEl) {
+      if (/\bEV\b|ELECTRIC/.test(upper)) fuelEl.value = "EV";
+      else if (/DIESEL/.test(upper)) fuelEl.value = "DIESEL";
+      else if (/PETROL/.test(upper)) fuelEl.value = "PETROL";
+      else if (/HYBRID/.test(upper)) fuelEl.value = "HYBRID";
+      else if (/CNG/.test(upper)) fuelEl.value = "CNG";
+    }
+
+    const yearMatch = upper.match(/\b(20[0-2][0-9]|199[0-9])\b/);
+    if (yearEl && yearMatch) {
+      yearEl.value = yearMatch[1];
+    }
+
+    statusEl.textContent = detectedPlate
+      ? `Extracted RC: ${detectedPlate} (verify fields before saving)`
+      : "RC scanned — no clear reg. number found; please verify fields.";
+  } catch (err) {
+    statusEl.textContent = err.message || "RC scan failed — please enter details manually.";
   }
 }
 
@@ -202,6 +356,10 @@ function setupModalChips() {
 function openAddVehicleModal(sourceTab) {
   state.modalSourceTab = sourceTab;
   document.getElementById("mVehicleError").innerHTML = "";
+  document.getElementById("mRcStatus").textContent = "";
+  document.getElementById("mPlateStatus").textContent = "";
+  document.getElementById("mRcPreview").innerHTML = "";
+  document.getElementById("mPlatePreview").innerHTML = "";
   document.getElementById("addVehicleModal").classList.add("open");
 }
 
@@ -249,7 +407,10 @@ async function submitNewVehicle() {
   }
 
   closeModal("addVehicleModal");
-  ["mRcPlate", "mScanPlate", "mMake", "mModel", "mInsProvider", "mInsExpiry"].forEach((id) => (document.getElementById(id).value = ""));
+  ["mRcPlate", "mScanPlate", "mMake", "mModel", "mInsProvider", "mInsExpiry", "mRcFile", "mPlateFile"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
   await refreshAllData(data.vehicle_id);
   if (state.modalSourceTab === "service") renderWorkshopsForSelected();
   if (data.plate_mismatch) alert(data.verification_notice);

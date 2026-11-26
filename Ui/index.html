@@ -239,13 +239,13 @@
     </nav>
   </div>
 
-  <!-- INLINE MODAL: ADD NEW VEHICLE (Works from Garage, Scan, Trips, or Service) -->
+  <!-- INLINE MODAL: ADD NEW VEHICLE -->
   <div id="addVehicleModal" class="modal-backdrop">
     <div class="modal-sheet">
       <div class="card-head">
         <div>
           <h2>Register Vehicle</h2>
-          <p class="sub">Added straight to your garage & selected automatically.</p>
+          <p class="sub">Upload RC or plate photo to auto-extract details, or enter manually.</p>
         </div>
         <button type="button" class="btn-inline" onclick="closeModal('addVehicleModal')">Close</button>
       </div>
@@ -260,13 +260,17 @@
       <div class="grid2">
         <div>
           <label>RC Photo</label>
-          <input type="file" accept="image/*" />
+          <input type="file" id="mRcFile" accept="image/*" />
+          <div id="mRcPreview" style="margin-top:6px;"></div>
+          <div id="mRcStatus" class="sub" style="margin-top:4px;"></div>
           <label>RC Number</label>
           <input id="mRcPlate" placeholder="KA 01 AB 1234" />
         </div>
         <div>
           <label>Plate Photo</label>
-          <input type="file" accept="image/*" capture="environment" />
+          <input type="file" id="mPlateFile" accept="image/*" capture="environment" />
+          <div id="mPlatePreview" style="margin-top:6px;"></div>
+          <div id="mPlateStatus" class="sub" style="margin-top:4px;"></div>
           <label>Scanned Plate No.</label>
           <input id="mScanPlate" placeholder="KA 01 AB 1234" />
         </div>
@@ -357,6 +361,7 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="/app/app.js"></script>
 </body>
 </html>
