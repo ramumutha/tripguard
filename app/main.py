@@ -1,6 +1,7 @@
-﻿import os
+﻿import json
+import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 from urllib import request as urlrequest
 from urllib.error import URLError
 
@@ -9,40 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.schemas import (
-    AuthLoginRequest,
-    AuthUser,
-    BookingCreate,
-    BookingRecord,
-    InsuranceInfo,
-    ScanCreate,
-    ScanRecord,
-    ShareCardResponse,
-    SosCreate,
-    SosEvent,
-    TripCreate,
-    TripRecord,
-    VehicleCreate,
-    VehicleHistoryEntry,
-    VehicleRecord,
-    Workshop,
-)
-from app.store import (
-    create_booking,
-    create_scan,
-    create_sos,
-    create_trip,
-    create_vehicle,
-    get_share_card,
-    get_vehicle,
-    list_bookings,
-    list_trips,
-    list_vehicles,
-    list_workshops,
-    login_or_register_user,
-    update_vehicle_insurance,
-    add_vehicle_history,
-)
+import app.schemas as schemas
+import app.store as store
 
 app = FastAPI(title="TripGuard Phase 1 API", version="2.0.0")
 
@@ -56,6 +25,42 @@ app.add_middleware(
 
 _ui_dir = Path("ui") if Path("ui").is_dir() else Path("Ui")
 app.mount("/app", StaticFiles(directory=str(_ui_dir), html=True), name="ui")
+
+
+def _pick_model(*candidates: str) -> Any:
+    for name in candidates:
+        if hasattr(schemas, name):
+            return getattr(schemas, name)
+    return Any
+
+
+def _call_store(func_names: List[str], *args: Any, **kwargs: Any) -> Any:
+    for name in func_names:
+        fn = getattr(store, name, None)
+        if callable(fn):
+            try:
+                return fn(*args, **kwargs)
+            except TypeError:
+                return fn(*args)
+    raise HTTPException(status_code=501, detail=f"Store handler not found for {func_names}")
+
+
+AuthLoginReq = _pick_model("AuthLoginRequest", "LoginRequest", "UserLoginRequest", "AuthRequest")
+AuthUserResp = _pick_model("AuthUser", "UserProfile", "UserResponse", "AuthResponse")
+VehicleCreateReq = _pick_model("VehicleCreate", "VehicleIn", "CreateVehicleRequest")
+VehicleResp = _pick_model("VehicleRecord", "Vehicle", "VehicleResponse")
+InsuranceReq = _pick_model("InsuranceInfo", "InsuranceUpdate", "InsuranceCreate", "Insurance")
+HistoryReq = _pick_model("VehicleHistoryEntry", "HistoryCreate", "ServiceHistoryCreate", "HistoryEntry")
+ScanCreateReq = _pick_model("ScanCreate", "ScanRequest", "HealthScanCreate")
+ScanResp = _pick_model("ScanRecord", "ScanResult", "ScanResponse")
+TripCreateReq = _pick_model("TripCreate", "TripRequest", "CreateTripRequest")
+TripResp = _pick_model("TripRecord", "Trip", "TripResponse")
+SosCreateReq = _pick_model("SosCreate", "SosRequest", "CreateSosRequest")
+SosResp = _pick_model("SosEvent", "SosRecord", "SosResponse")
+WorkshopResp = _pick_model("Workshop", "WorkshopRecord", "WorkshopInfo")
+BookingCreateReq = _pick_model("BookingCreate", "BookingRequest", "CreateBookingRequest")
+BookingResp = _pick_model("BookingRecord", "Booking", "BookingResponse")
+ShareCardResp = _pick_model("ShareCardResponse", "ShareCard", "ShareCardOut")
 
 
 @app.get("/")
@@ -108,8 +113,6 @@ async def recognize_plate_image(file: UploadFile = File(...)):
 
     try:
         with urlrequest.urlopen(req, timeout=20) as resp:
-            import json
-
             payload = json.loads(resp.read().decode("utf-8"))
     except URLError as exc:
         raise HTTPException(status_code=502, detail=f"Plate Recognizer request failed: {exc}") from exc
@@ -134,100 +137,100 @@ async def recognize_plate_image(file: UploadFile = File(...)):
     }
 
 
-@app.post("/api/v1/auth/login", response_model=AuthUser)
-def auth_login(payload: AuthLoginRequest):
-    return login_or_register_user(payload)
+@app.post("/api/v1/auth/login", response_model=AuthUserResp)
+def auth_login(payload: AuthLoginReq):
+    return _call_store(["login_or_register_user", "auth_login", "login_user"], payload)
 
 
-@app.get("/api/v1/vehicles", response_model=List[VehicleRecord])
+@app.get("/api/v1/vehicles", response_model=List[VehicleResp])
 def get_vehicles(user_id: Optional[str] = Query(default=None)):
-    return list_vehicles(user_id=user_id)
+    return _call_store(["list_vehicles", "get_vehicles"], user_id=user_id)
 
 
-@app.post("/api/v1/vehicles", response_model=VehicleRecord, status_code=201)
-def add_vehicle(payload: VehicleCreate):
+@app.post("/api/v1/vehicles", response_model=VehicleResp, status_code=201)
+def add_vehicle(payload: VehicleCreateReq):
     try:
-        return create_vehicle(payload)
+        return _call_store(["create_vehicle", "add_vehicle"], payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/v1/vehicles/{vehicle_id}", response_model=VehicleRecord)
+@app.get("/api/v1/vehicles/{vehicle_id}", response_model=VehicleResp)
 def read_vehicle(vehicle_id: str):
-    v = get_vehicle(vehicle_id)
+    v = _call_store(["get_vehicle", "read_vehicle"], vehicle_id)
     if not v:
         raise HTTPException(status_code=404, detail="Vehicle not found")
     return v
 
 
-@app.put("/api/v1/vehicles/{vehicle_id}/insurance", response_model=VehicleRecord)
-def put_vehicle_insurance(vehicle_id: str, payload: InsuranceInfo):
+@app.put("/api/v1/vehicles/{vehicle_id}/insurance", response_model=VehicleResp)
+def put_vehicle_insurance(vehicle_id: str, payload: InsuranceReq):
     try:
-        return update_vehicle_insurance(vehicle_id, payload)
+        return _call_store(["update_vehicle_insurance", "set_vehicle_insurance"], vehicle_id, payload)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Vehicle not found") from exc
 
 
-@app.post("/api/v1/vehicles/{vehicle_id}/history", response_model=VehicleRecord)
-def post_vehicle_history(vehicle_id: str, payload: VehicleHistoryEntry):
+@app.post("/api/v1/vehicles/{vehicle_id}/history", response_model=VehicleResp)
+def post_vehicle_history(vehicle_id: str, payload: HistoryReq):
     try:
-        return add_vehicle_history(vehicle_id, payload)
+        return _call_store(["add_vehicle_history", "append_vehicle_history"], vehicle_id, payload)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Vehicle not found") from exc
 
 
-@app.post("/api/v1/scans", response_model=ScanRecord, status_code=201)
-def post_scan(payload: ScanCreate):
+@app.post("/api/v1/scans", response_model=ScanResp, status_code=201)
+def post_scan(payload: ScanCreateReq):
     try:
-        return create_scan(payload)
+        return _call_store(["create_scan", "run_scan"], payload)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Vehicle not found") from exc
 
 
-@app.get("/api/v1/trips", response_model=List[TripRecord])
+@app.get("/api/v1/trips", response_model=List[TripResp])
 def get_trips(user_id: Optional[str] = Query(default=None)):
-    return list_trips(user_id=user_id)
+    return _call_store(["list_trips", "get_trips"], user_id=user_id)
 
 
-@app.post("/api/v1/trips", response_model=TripRecord, status_code=201)
-def post_trip(payload: TripCreate):
+@app.post("/api/v1/trips", response_model=TripResp, status_code=201)
+def post_trip(payload: TripCreateReq):
     try:
-        return create_trip(payload)
+        return _call_store(["create_trip", "add_trip"], payload)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Vehicle not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/v1/sos", response_model=SosEvent, status_code=201)
-def post_sos(payload: SosCreate):
+@app.post("/api/v1/sos", response_model=SosResp, status_code=201)
+def post_sos(payload: SosCreateReq):
     try:
-        return create_sos(payload)
+        return _call_store(["create_sos", "trigger_sos"], payload)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Trip or vehicle not found") from exc
 
 
-@app.get("/api/v1/workshops", response_model=List[Workshop])
+@app.get("/api/v1/workshops", response_model=List[WorkshopResp])
 def get_workshops(vehicle_class: Optional[str] = Query(default=None)):
-    return list_workshops(vehicle_class=vehicle_class)
+    return _call_store(["list_workshops", "get_workshops"], vehicle_class=vehicle_class)
 
 
-@app.get("/api/v1/bookings", response_model=List[BookingRecord])
+@app.get("/api/v1/bookings", response_model=List[BookingResp])
 def get_bookings(user_id: Optional[str] = Query(default=None)):
-    return list_bookings(user_id=user_id)
+    return _call_store(["list_bookings", "get_bookings"], user_id=user_id)
 
 
-@app.post("/api/v1/bookings", response_model=BookingRecord, status_code=201)
-def post_booking(payload: BookingCreate):
+@app.post("/api/v1/bookings", response_model=BookingResp, status_code=201)
+def post_booking(payload: BookingCreateReq):
     try:
-        return create_booking(payload)
+        return _call_store(["create_booking", "add_booking"], payload)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Vehicle or workshop not found") from exc
 
 
-@app.get("/api/v1/share-card/{vehicle_id}", response_model=ShareCardResponse)
+@app.get("/api/v1/share-card/{vehicle_id}", response_model=ShareCardResp)
 def read_share_card(vehicle_id: str, hide_sensitive: bool = Query(default=True)):
     try:
-        return get_share_card(vehicle_id=vehicle_id, hide_sensitive=hide_sensitive)
+        return _call_store(["get_share_card", "build_share_card"], vehicle_id=vehicle_id, hide_sensitive=hide_sensitive)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Vehicle not found") from exc
