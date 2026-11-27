@@ -59,8 +59,16 @@ def _persist() -> None:
     db.save()
 
 
+def _dict_items(collection: Any) -> List[Dict[str, Any]]:
+    if isinstance(collection, dict):
+        return [v for v in collection.values() if isinstance(v, dict)]
+    if isinstance(collection, list):
+        return [v for v in collection if isinstance(v, dict)]
+    return []
+
+
 def _find_vehicle_raw(vehicle_id: str) -> Optional[Dict[str, Any]]:
-    for v in db.data.get("vehicles", []):
+    for v in _dict_items(db.data.get("vehicles")):
         if v.get("vehicle_id") == vehicle_id:
             return v
     return None
@@ -83,7 +91,10 @@ def _build_vehicle_record(v: Dict[str, Any]) -> VehicleRecord:
     )
     ins_data = v.get("insurance")
     ins_obj = InsuranceInfo(**ins_data) if isinstance(ins_data, dict) else None
-    hist_objs = [VehicleHistoryEntry(**h) for h in v.get("history", [])]
+    hist_objs = [
+        VehicleHistoryEntry(**h)
+        for h in _dict_items(v.get("history"))
+    ]
 
     return VehicleRecord(
         vehicle_id=v["vehicle_id"],
@@ -190,7 +201,7 @@ def auth_login(payload: LoginRequest):
 
 @app.get("/api/v1/vehicles", response_model=List[VehicleRecord])
 def get_vehicles(user_id: Optional[str] = Query(default=None)):
-    items = db.data.get("vehicles", [])
+    items = _dict_items(db.data.get("vehicles"))
     if user_id:
         items = [v for v in items if v.get("user_id") == user_id]
     return [_build_vehicle_record(v) for v in items]
@@ -246,6 +257,8 @@ def add_vehicle(payload: VehicleCreate):
         "history": history_entries,
         "created_at": now_str,
     }
+    if not isinstance(db.data.get("vehicles"), list):
+        db.data["vehicles"] = _dict_items(db.data.get("vehicles"))
     db.data["vehicles"].append(raw_rec)
     _persist()
     return _build_vehicle_record(raw_rec)
@@ -282,7 +295,9 @@ def post_vehicle_history(vehicle_id: str, payload: VehicleHistoryCreate):
         summary=payload.summary,
         cost_inr=payload.cost_inr,
     )
-    v.setdefault("history", []).insert(0, entry.model_dump())
+    hist = _dict_items(v.get("history"))
+    hist.insert(0, entry.model_dump())
+    v["history"] = hist
     if payload.odometer_km and payload.odometer_km > int(v.get("odometer_km", 0)):
         v["odometer_km"] = int(payload.odometer_km)
     _persist()
@@ -343,14 +358,16 @@ def post_scan(payload: ScanCreate):
     scan_rec = ScanRecord(
         scan_id=db.new_id("scn"),
         vehicle_id=payload.vehicle_id,
-        trip_distance_km=payload.trip_distance_km,
-        is_ghat_route=payload.is_ghat_route,
         readiness_score=score,
         overall_status=overall,
-        advisories=advisories,
+        trip_distance_km=payload.trip_distance_km,
+        is_ghat_route=payload.is_ghat_route,
         items=payload.items,
+        advisories=advisories,
         created_at=utc_now(),
     )
+    if not isinstance(db.data.get("scans"), list):
+        db.data["scans"] = _dict_items(db.data.get("scans"))
     db.data["scans"].append(scan_rec.model_dump())
     _persist()
     return scan_rec
@@ -358,7 +375,7 @@ def post_scan(payload: ScanCreate):
 
 @app.get("/api/v1/trips", response_model=List[TripRecord])
 def get_trips(user_id: Optional[str] = Query(default=None)):
-    items = db.data.get("trips", [])
+    items = _dict_items(db.data.get("trips"))
     if user_id:
         items = [t for t in items if t.get("user_id") == user_id]
     return [TripRecord(**t) for t in items]
@@ -389,6 +406,8 @@ def post_trip(payload: TripCreate):
         cached_workshops=cached_ws,
         created_at=utc_now(),
     )
+    if not isinstance(db.data.get("trips"), list):
+        db.data["trips"] = _dict_items(db.data.get("trips"))
     db.data["trips"].append(trip_rec.model_dump())
     _persist()
     return trip_rec
@@ -396,7 +415,7 @@ def post_trip(payload: TripCreate):
 
 @app.post("/api/v1/sos", response_model=SosRecord, status_code=201)
 def post_sos(payload: SosRequest):
-    trip = next((t for t in db.data.get("trips", []) if t.get("trip_id") == payload.trip_id), None)
+    trip = next((t for t in _dict_items(db.data.get("trips")) if t.get("trip_id") == payload.trip_id), None)
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
     v = _find_vehicle_raw(trip["vehicle_id"])
@@ -413,6 +432,8 @@ def post_sos(payload: SosRequest):
         issue_summary=payload.issue_summary,
         created_at=utc_now(),
     )
+    if not isinstance(db.data.get("sos_events"), list):
+        db.data["sos_events"] = _dict_items(db.data.get("sos_events"))
     db.data["sos_events"].append(sos_rec.model_dump())
     _persist()
     return sos_rec
@@ -425,7 +446,7 @@ def get_workshops(vehicle_class: Optional[str] = Query(default=None)):
 
 @app.get("/api/v1/bookings", response_model=List[BookingRecord])
 def get_bookings(user_id: Optional[str] = Query(default=None)):
-    items = db.data.get("bookings", [])
+    items = _dict_items(db.data.get("bookings"))
     if user_id:
         items = [b for b in items if b.get("user_id") == user_id]
     return [BookingRecord(**b) for b in items]
@@ -443,7 +464,7 @@ def post_booking(payload: BookingCreate):
     scan_id: Optional[str] = None
     scan_summary: Optional[str] = None
     if payload.attach_scan_summary:
-        veh_scans = [s for s in db.data.get("scans", []) if s.get("vehicle_id") == payload.vehicle_id]
+        veh_scans = [s for s in _dict_items(db.data.get("scans")) if s.get("vehicle_id") == payload.vehicle_id]
         if veh_scans:
             latest = veh_scans[-1]
             scan_id = latest.get("scan_id")
@@ -461,6 +482,8 @@ def post_booking(payload: BookingCreate):
         status="REQUEST_SENT",
         created_at=utc_now(),
     )
+    if not isinstance(db.data.get("bookings"), list):
+        db.data["bookings"] = _dict_items(db.data.get("bookings"))
     db.data["bookings"].append(booking_rec.model_dump())
     _persist()
     return booking_rec
@@ -473,12 +496,12 @@ def read_share_card(vehicle_id: str, hide_sensitive: bool = Query(default=True))
         raise HTTPException(status_code=404, detail="Vehicle not found")
     veh = _build_vehicle_record(v)
 
-    veh_scans = [s for s in db.data.get("scans", []) if s.get("vehicle_id") == vehicle_id]
+    veh_scans = [s for s in _dict_items(db.data.get("scans")) if s.get("vehicle_id") == vehicle_id]
     latest_scan = veh_scans[-1] if veh_scans else None
     score = int(latest_scan["readiness_score"]) if latest_scan else 85
     badge = latest_scan["overall_status"] if latest_scan else "READY"
 
-    veh_trips = [t for t in db.data.get("trips", []) if t.get("vehicle_id") == vehicle_id]
+    veh_trips = [t for t in _dict_items(db.data.get("trips")) if t.get("vehicle_id") == vehicle_id]
     latest_trip = veh_trips[-1] if veh_trips else None
     trip_summary = (
         f"{latest_trip['origin']} -> {latest_trip['destination']} ({latest_trip['route_type']})"
