@@ -723,3 +723,210 @@ async function shareNow() {
 }
 
 init();
+
+// --- RC & Plate OCR enhancement (auto-appended) ---
+const KNOWN_MAKES = [
+  "HYUNDAI", "MARUTI SUZUKI", "MARUTI", "SUZUKI", "TATA", "MAHINDRA",
+  "HONDA", "TOYOTA", "KIA", "MG", "VOLKSWAGEN", "SKODA", "RENAULT",
+  "NISSAN", "FORD", "JEEP", "ROYAL ENFIELD", "HERO", "BAJAJ", "TVS",
+  "ATHER", "OLA", "YAMAHA"
+];
+
+const KNOWN_MODELS = [
+  "I20", "GRAND I10", "NIOS", "VENUE", "CRETA", "VERNA", "EXTER", "AURA",
+  "SWIFT", "BALENO", "DZIRE", "BREZZA", "ERTIGA", "ALTO", "WAGON R", "FRONX",
+  "NEXON", "PUNCH", "HARRIER", "SAFARI", "ALTROZ", "TIAGO", "TIGOR",
+  "THAR", "SCORPIO", "XUV700", "XUV300", "XUV 3XO", "BOLERO",
+  "CITY", "AMAZE", "ELEVATE", "INNOVA", "FORTUNER", "GLANZA", "URBAN CRUISER",
+  "SELTOS", "SONET", "CARENS", "HECTOR", "ASTOR", "COMET",
+  "VIRTUS", "TAIGUN", "POLO", "SLAVIA", "KUSHAQ", "KIGER", "MAGNITE"
+];
+
+let _plateApiConfiguredCache = null;
+
+async function isPlateApiConfigured() {
+  if (_plateApiConfiguredCache !== null) return _plateApiConfiguredCache;
+  try {
+    const r = await fetch(`${API}/health`);
+    if (!r.ok) return false;
+    const data = await r.json();
+    _plateApiConfiguredCache = Boolean(data && data.plate_recognizer_configured);
+    return _plateApiConfiguredCache;
+  } catch {
+    return false;
+  }
+}
+
+function parseRcFieldsFromText(rawText) {
+  const upper = (rawText || "").toUpperCase();
+  const cleanText = upper.replace(/[^A-Z0-9\s./-]/g, " ");
+  const out = {
+    plate: formatIndianPlate(upper),
+    make: "",
+    model: "",
+    year: "",
+    fuel: ""
+  };
+
+  if (out.plate && !/^[A-Z]{2}\s?\d{2}\s?[A-Z]{1,3}\s?\d{3,4}$/.test(out.plate)) {
+    out.plate = "";
+  }
+
+  // Fuel detection
+  if (/\b(ELECTRIC|EV|BOV|BATTERY)\b/.test(cleanText)) {
+    out.fuel = "ELECTRIC";
+  } else if (/\bCNG\b/.test(cleanText)) {
+    out.fuel = "CNG";
+  } else if (/\bDIESEL\b/.test(cleanText)) {
+    out.fuel = "DIESEL";
+  } else if (/\bHYBRID\b/.test(cleanText)) {
+    out.fuel = "HYBRID";
+  } else if (/\bPETROL\b/.test(cleanText)) {
+    out.fuel = "PETROL";
+  }
+
+  // Year detection (4-digit year between 2000 and 2026)
+  const years = cleanText.match(/\b(20[0-2][0-9])\b/g);
+  if (years && years.length > 0) {
+    const validYears = years.map(Number).filter((y) => y >= 2000 && y <= 2026);
+    if (validYears.length > 0) {
+      out.year = String(validYears[validYears.length - 1]);
+    }
+  }
+
+  // Make detection
+  for (const mk of KNOWN_MAKES) {
+    if (cleanText.includes(mk)) {
+      out.make = mk === "MARUTI" || mk === "SUZUKI" ? "Maruti Suzuki" : toTitleCase(mk);
+      break;
+    }
+  }
+
+  // Model detection
+  for (const mdl of KNOWN_MODELS) {
+    const escaped = mdl.replace(/\s+/g, "\\s+");
+    if (new RegExp(`\\b${escaped}\\b`, "i").test(cleanText)) {
+      out.model = mdl.length <= 3 ? mdl.toUpperCase() : toTitleCase(mdl);
+      break;
+    }
+  }
+
+  return out;
+}
+
+function toTitleCase(str) {
+  return (str || "")
+    .toLowerCase()
+    .replace(/\b([a-z])/g, (_, ch) => ch.toUpperCase());
+}
+
+async function runFullImageOcrText(file) {
+  if (!window.Tesseract || typeof window.Tesseract.recognize !== "function") {
+    return "";
+  }
+  const { data } = await window.Tesseract.recognize(file, "eng");
+  return (data && data.text) || "";
+}
+
+// Override extractFromRcImage & extractFromPlateImage with enhanced versions
+extractFromRcImage = async function (file) {
+  const rcInput = document.getElementById("mRcPlate");
+  const scanPlateInput = document.getElementById("mScanPlate");
+  const makeEl = document.getElementById("mMake");
+  const modelEl = document.getElementById("mModel");
+  const yearEl = document.getElementById("mYear");
+  const fuelEl = document.getElementById("mFuel");
+
+  try {
+    const [fullText, plateCrop] = await Promise.all([
+      runFullImageOcrText(file).catch(() => ""),
+      runFallbackTesseract(file).catch(() => "")
+    ]);
+
+    const parsed = parseRcFieldsFromText(fullText);
+    const detectedPlate = parsed.plate || plateCrop;
+    const filled = [];
+
+    if (detectedPlate) {
+      if (rcInput) rcInput.value = detectedPlate;
+      if (scanPlateInput && !scanPlateInput.value.trim()) {
+        scanPlateInput.value = detectedPlate;
+      }
+      filled.push(`RC ${detectedPlate}`);
+    }
+
+    if (parsed.make && makeEl && !makeEl.value.trim()) {
+      makeEl.value = parsed.make;
+      filled.push(`Make ${parsed.make}`);
+    }
+
+    if (parsed.model && modelEl && !modelEl.value.trim()) {
+      modelEl.value = parsed.model;
+      filled.push(`Model ${parsed.model}`);
+    }
+
+    if (parsed.year && yearEl) {
+      yearEl.value = parsed.year;
+      filled.push(`Year ${parsed.year}`);
+    }
+
+    if (parsed.fuel && fuelEl) {
+      const hasOption = Array.from(fuelEl.options || []).some((o) => o.value === parsed.fuel);
+      if (hasOption) {
+        fuelEl.value = parsed.fuel;
+        filled.push(`Fuel ${parsed.fuel}`);
+      }
+    }
+
+    if (filled.length > 0) {
+      setOcrStatus("mRcStatus", `Extracted ${filled.join(" • ")} — please verify`, "ok");
+    } else {
+      setOcrStatus("mRcStatus", "Could not read RC fields clearly — please enter details manually.", "warn");
+    }
+  } catch {
+    setOcrStatus("mRcStatus", "Could not read RC cleanly — please enter details manually.", "warn");
+  }
+};
+
+extractFromPlateImage = async function (file) {
+  const plateInput = document.getElementById("mScanPlate");
+  const makeEl = document.getElementById("mMake");
+  const rcInput = document.getElementById("mRcPlate");
+
+  const apiReady = await isPlateApiConfigured();
+  if (apiReady) {
+    try {
+      const apiResult = await callBackendPlateRecognizer(file);
+      if (apiResult && apiResult.plate) {
+        const formatted = formatIndianPlate(apiResult.plate);
+        if (plateInput) plateInput.value = formatted;
+        if (rcInput && !rcInput.value.trim()) rcInput.value = formatted;
+        if (makeEl && !makeEl.value.trim() && apiResult.make) {
+          makeEl.value = apiResult.make;
+        }
+        const pct = apiResult.score ? ` (${Math.round(apiResult.score * 100)}% match)` : "";
+        setOcrStatus("mPlateStatus", `Detected plate: ${formatted}${pct}`, "ok");
+        return;
+      }
+    } catch (apiErr) {
+      console.info("[TripGuard Plate API fallback]:", apiErr.message);
+    }
+  }
+
+  try {
+    const fallbackPlate = await runFallbackTesseract(file);
+    if (fallbackPlate) {
+      if (plateInput) plateInput.value = fallbackPlate;
+      if (rcInput && !rcInput.value.trim()) rcInput.value = fallbackPlate;
+      setOcrStatus("mPlateStatus", `Detected plate (local scan): ${fallbackPlate} — verify`, "ok");
+    } else if (rcInput && rcInput.value.trim()) {
+      const fromRc = formatIndianPlate(rcInput.value.trim());
+      if (plateInput && !plateInput.value.trim()) plateInput.value = fromRc;
+      setOcrStatus("mPlateStatus", `Using RC plate ${fromRc} (no separate plate API needed) — verify`, "ok");
+    } else {
+      setOcrStatus("mPlateStatus", "Enter plate number manually or upload RC photo.", "warn");
+    }
+  } catch {
+    setOcrStatus("mPlateStatus", "Could not auto-read plate — please type number manually.", "warn");
+  }
+};
