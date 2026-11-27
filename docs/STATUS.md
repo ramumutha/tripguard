@@ -1,0 +1,5 @@
+# TripGuard delivery status
+2026-11-27 — Batch 1 native Android UI preview source authored; build and tests NOT RUN. Base 0c5eca5e3292bbeadad763f0b7b5a673a81c3d7b. Branch feat/society-pilot-polish; preserve existing Python and web application. Public repository: no confidential IP.
+Screen inventory authority: https://spenmer.atlassian.net/wiki/spaces/TG/pages/26083329
+Partial UI coverage: S03 home, S04 garage, S05 add vehicle/class, S06 edit/delete, S09 selection, S10 checklist, S13 findings, S14 history, S15 destination-only planning, S17 active preview, S19 end, S20 emergency hub, S22 dialer confirmation, S23 limited guidance, S26 limited settings, S46 limitations. These 16 IDs have some implementation, not 16 fully completed or qualified screens. All 50 remain unqualified. Other states, flows and screens pending.
+Next: clean Gradle build, fix compilation if needed, Room persistence and local data controls, permissions/GPS and camera, accessibility, remaining mock flows, real-device testing. No backend changes, hardware purchases, CI runs, merge or production deployment requested. Use local Windows validation before QA.
