@@ -17,7 +17,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.CancellationException
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.spenmer.tripguard.domain.*
 import java.util.UUID
@@ -35,24 +40,51 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-class PreviewRepository : VehicleRepository {
-    private val records = mutableListOf<Vehicle>()
-    override fun list() = records.toList()
-    override fun save(vehicle: Vehicle) { records.removeAll { it.id == vehicle.id }; records.add(vehicle) }
-    override fun remove(id: String) { records.removeAll { it.id == id } }
-}
 data class InspectionPreview(val vehicle: String, val finding: Finding, val completed: Int, val total: Int)
-class TripGuardViewModel : ViewModel() {
-    private val repository: VehicleRepository = PreviewRepository()
-    var vehicles by mutableStateOf(repository.list()); private set
-    var history by mutableStateOf(listOf<InspectionPreview>()); private set
+class TripGuardViewModel(application: Application) : AndroidViewModel(application) {
+    private val dao = LocalDatabase.get(application).dao()
+    var vehicles by mutableStateOf(emptyList<Vehicle>()); private set
+    var history by mutableStateOf(emptyList<InspectionPreview>()); private set
     var journey by mutableStateOf<String?>(null); private set
-    fun save(v: Vehicle) { repository.save(v); vehicles = repository.list() }
-    fun remove(id: String) { repository.remove(id); vehicles = repository.list() }
-    fun record(record: InspectionPreview) { history = history + record }
-    fun startJourney(destination: String) { journey = destination }
-    fun endJourney() { journey = null }
-    fun clearPreview() { vehicles.forEach { repository.remove(it.id) }; vehicles = repository.list(); history = emptyList(); journey = null }
+    var ready by mutableStateOf(false); private set
+    var busy by mutableStateOf(false); private set
+    var failure by mutableStateOf<String?>(null); private set
+    init {
+        viewModelScope.launch {
+            try {
+                combine(dao.vehicles(), dao.inspections(), dao.journey()) { v, h, j ->
+                    Triple(v.map { it.domain() }, h.map { InspectionPreview(it.vehicle, Finding.valueOf(it.finding), it.completed, it.total) }, j?.destination)
+                }.collect { (v, h, j) ->
+                    vehicles = v; history = h; journey = j; ready = true
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { ready = false; failure = "Local records unavailable. Restart the app to retry." }
+        }
+    }
+    fun dismissFailure() { failure = null }
+    private fun change(after: () -> Unit = {}, operation: suspend () -> Unit) {
+        if (!ready || busy) return
+        busy = true
+        viewModelScope.launch {
+            try { operation(); after() }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { failure = "Local change could not be saved. Please retry." }
+            finally { busy = false }
+        }
+    }
+    fun save(v: Vehicle, after: () -> Unit) = change(after) {
+        dao.saveVehicle(VehicleRow(v.id, v.name, v.kind.name, v.propulsion.name))
+    }
+    fun remove(id: String, after: () -> Unit) = change(after) { dao.deleteVehicle(id) }
+    fun record(record: InspectionPreview, after: () -> Unit) = change(after) {
+        dao.record(InspectionRow(vehicle = record.vehicle, finding = record.finding.name,
+            completed = record.completed, total = record.total, recordedAt = System.currentTimeMillis()))
+    }
+    fun startJourney(destination: String) = change {
+        check(dao.start(JourneyRow(destination = destination, startedAt = System.currentTimeMillis())) != -1L)
+    }
+    fun endJourney() = change { dao.end() }
+    fun clearPreview(after: () -> Unit) = change(after) { dao.clearAll() }
 }
 enum class Page(val title: String) { WELCOME("Welcome"), CAPABILITIES("Vehicle capabilities"), PRIVACY("Privacy and local data"), HOME("Home"), GARAGE("Garage"), ADD("Vehicle profile"),
     INSPECTION("Safety inspection"), HISTORY("Inspection history"), JOURNEY("Journey"),
@@ -81,19 +113,23 @@ fun TripGuard(vm: TripGuardViewModel = viewModel()) {
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
-                Text("UI PREVIEW • Session-only data • No live monitoring", Modifier.fillMaxWidth().padding(12.dp),
+                Text("LOCAL PREVIEW • No live monitoring", Modifier.fillMaxWidth().padding(12.dp),
                     style = MaterialTheme.typography.labelMedium)
             }
+            if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            vm.failure?.let { message -> Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) { Text(message, Modifier.weight(1f)); TextButton(onClick = vm::dismissFailure) { Text("Dismiss") } } }
             Box(Modifier.weight(1f)) {
-                when(page) {
+                if (page != Page.RESCUE && !vm.ready) {
+                    Column(Modifier.padding(16.dp)) { Text("Local storage is loading or unavailable."); if (vm.failure != null) Text("Restart the app to retry.") }
+                } else when(page) {
                     Page.HOME -> Home(vm.vehicles.size, navigate)
                     Page.GARAGE -> Garage(vm.vehicles, { editingId = null; page = Page.ADD },
                         { editingId = it.id; page = Page.ADD }, { selectedId = it.id; page = Page.INSPECTION })
                     Page.ADD -> VehicleForm(vm.vehicles.firstOrNull { it.id == editingId }, {
-                        vm.save(it); page = Page.GARAGE
-                    }, { vm.remove(it); page = Page.GARAGE }, { page = Page.GARAGE })
+                        vm.save(it) { page = Page.GARAGE }
+                    }, { vm.remove(it) { page = Page.GARAGE } }, { page = Page.GARAGE })
                     Page.INSPECTION -> Inspection(vm.vehicles, selectedId, {
-                        vm.record(it); page = Page.HISTORY
+                        vm.record(it) { page = Page.HISTORY }
                     }, { editingId = null; page = Page.ADD })
                     Page.HISTORY -> History(vm.history, { page = Page.INSPECTION })
                     Page.JOURNEY -> Journey(vm.journey, vm::startJourney, vm::endJourney)
@@ -101,7 +137,7 @@ fun TripGuard(vm: TripGuardViewModel = viewModel()) {
                     Page.SETTINGS -> Settings({ page = Page.PRIVACY }, { page = Page.CAPABILITIES })
                     Page.WELCOME -> Welcome { page = Page.HOME }
                     Page.CAPABILITIES -> Capabilities()
-                    Page.PRIVACY -> Privacy { vm.clearPreview(); selectedId = null; editingId = null; page = Page.HOME }
+                    Page.PRIVACY -> Privacy { vm.clearPreview { selectedId = null; editingId = null; page = Page.HOME } }
                 }
             }
         }
@@ -130,10 +166,10 @@ private fun Home(count: Int, navigate: (Page) -> Unit) = Body {
         Text("Every vehicle. Every journey.", style = MaterialTheme.typography.headlineMedium)
         Text("Prevent • Detect • Protect", style = MaterialTheme.typography.titleMedium)
     }
-    item { ActionCard("My garage", "$count vehicles in this preview session", "Manage vehicles") { navigate(Page.GARAGE) } }
+    item { ActionCard("My garage", "$count vehicles stored on this device", "Manage vehicles") { navigate(Page.GARAGE) } }
     item { ActionCard("Before you travel", "Guided stationary visual checks, not a certified inspection.", "Start safety check") { navigate(Page.INSPECTION) } }
     item { ActionCard("My journey", "Record a destination and prepare before departure.", "Plan journey") { navigate(Page.JOURNEY) } }
-    item { ActionCard("Vehicle health", "Review observations recorded in this session.", "View history") { navigate(Page.HISTORY) } }
+    item { ActionCard("Vehicle health", "Review observations stored on this device.", "View history") { navigate(Page.HISTORY) } }
     item { ActionCard("Emergency assistance", "Access guidance without signing in.", "Open emergency assistance") { navigate(Page.RESCUE) } }
 }
 @Composable
@@ -173,7 +209,7 @@ private fun VehicleForm(existing: Vehicle?, save: (Vehicle) -> Unit, remove: (St
         item { TextButton(onClick = cancel) { Text("Cancel") } }
     }
     if (confirmDelete && existing != null) AlertDialog(onDismissRequest = { confirmDelete = false },
-        title = { Text("Delete this vehicle?") }, text = { Text("The profile is removed from this preview session.") },
+        title = { Text("Delete this vehicle?") }, text = { Text("The profile is removed from this device. Historical inspection summaries remain until local data is cleared.") },
         confirmButton = { TextButton(onClick = { confirmDelete = false; remove(existing.id) }) { Text("Delete") } },
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } })
 }
@@ -226,7 +262,7 @@ private fun Inspection(vehicles: List<Vehicle>, initialId: String?, save: (Inspe
 }
 @Composable
 private fun History(history: List<InspectionPreview>, inspect: () -> Unit) = Body {
-    if (history.isEmpty()) item { Text("No inspection records in this session.") }
+    if (history.isEmpty()) item { Text("No inspection records on this device.") }
     items(history.reversed()) { h ->
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
@@ -283,10 +319,10 @@ private fun Rescue() {
 }
 @Composable
 private fun Settings(privacy: () -> Unit, capabilities: () -> Unit) = Body {
-    item { ActionCard("Privacy and local data", "Review or clear this session.", "Manage local data", privacy) }
+    item { ActionCard("Privacy and local data", "Review or clear local records.", "Manage local data", privacy) }
     item { ActionCard("Vehicle capabilities", "Understand supported and unavailable checks.", "View capabilities", capabilities) }
     item { Text("Local preview", style = MaterialTheme.typography.headlineSmall) }
-    item { Text("No account, internet permission or cloud synchronisation. Data is in memory and is lost when the process ends.") }
+    item { Text("No account, internet permission or cloud synchronisation. Records are stored locally on this device.") }
     item { Text("Device integrations, AI diagnosis and remote Guardian functionality are not available in this build.") }
     item { Text("Safety limitation: TripGuard is not a replacement for professional inspections, manufacturer warnings or emergency services.") }
 }
@@ -296,7 +332,7 @@ private fun Welcome(continueLocal: () -> Unit) = Body {
     item { Text("TripGuard", style = MaterialTheme.typography.headlineLarge) }
     item { Text("Prevent • Detect • Protect", style = MaterialTheme.typography.titleLarge) }
     item { Text("Prepare for journeys with guided visual checks and emergency guidance. No account is required.") }
-    item { Text("This preview uses session-only data. It does not detect hidden mechanical faults, track your journey or dispatch help.") }
+    item { Text("This preview stores records locally. It does not detect hidden mechanical faults, track your journey or dispatch help.") }
     item { Button(onClick = continueLocal, modifier = Modifier.fillMaxWidth()) { Text("Continue locally") } }
 }
 @Composable
@@ -312,11 +348,11 @@ private fun Privacy(clear: () -> Unit) {
     var confirm by remember { mutableStateOf(false) }
     Body {
         item { Text("Your preview data", style = MaterialTheme.typography.titleLarge) }
-        item { Text("Vehicle profiles, inspection summaries and destination are held in memory. No cloud transmission or account.") }
-        item { OutlinedButton(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth()) { Text("Clear all preview data") } }
+        item { Text("Vehicle profiles, inspection summaries and the active destination are stored locally. No cloud transmission or account.") }
+        item { OutlinedButton(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth()) { Text("Clear all local data") } }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false },
-        title = { Text("Clear this session?") },
+        title = { Text("Clear local records?") },
         text = { Text("All vehicle profiles, observations and the active destination will be removed. This cannot be undone.") },
         confirmButton = { TextButton(onClick = { confirm = false; clear() }) { Text("Clear data") } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } })
