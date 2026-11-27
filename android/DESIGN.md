@@ -1,0 +1,4 @@
+# TripGuard native design baseline
+Status: initial UI preview, not accepted or qualified.
+Principles: Prevent / Detect / Protect; accessible emergency entry, calm language, no misleading safety score, no fake telemetry or dispatch. Material 3; primary #075D59, secondary #43656B, background #F5F8F7, surface #FFFFFF, error #B3261E. Standard spacing 8/12/16/24dp; minimum 48dp interactive targets; scalable native typography. Light theme initially; dark theme, localisation and TalkBack verification pending. Use real device testing for small screens, large fonts, permissions and accessibility.
+Home, garage, inspection, journey, rescue and settings use shared cards and navigation. Future features must not be enabled until qualified. Mock state visibly labelled; emergency calls require confirmation and dialer action; never claim dispatch. No confidential invention material in public source.
