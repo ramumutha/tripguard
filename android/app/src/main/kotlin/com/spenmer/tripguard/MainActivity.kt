@@ -1,7 +1,7 @@
 package com.spenmer.tripguard
 
 import android.content.Intent
-import android.net.Uri
+import androidx.core.net.toUri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -52,15 +52,16 @@ class TripGuardViewModel : ViewModel() {
     fun record(record: InspectionPreview) { history = history + record }
     fun startJourney(destination: String) { journey = destination }
     fun endJourney() { journey = null }
+    fun clearPreview() { vehicles.forEach { repository.remove(it.id) }; vehicles = repository.list(); history = emptyList(); journey = null }
 }
-enum class Page(val title: String) { HOME("Home"), GARAGE("Garage"), ADD("Vehicle profile"),
+enum class Page(val title: String) { WELCOME("Welcome"), CAPABILITIES("Vehicle capabilities"), PRIVACY("Privacy and local data"), HOME("Home"), GARAGE("Garage"), ADD("Vehicle profile"),
     INSPECTION("Safety inspection"), HISTORY("Inspection history"), JOURNEY("Journey"),
     RESCUE("Emergency assistance"), SETTINGS("Settings") }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TripGuard(vm: TripGuardViewModel = viewModel()) {
-    var page by rememberSaveable { mutableStateOf(Page.HOME) }
+    var page by rememberSaveable { mutableStateOf(Page.WELCOME) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     val navigate: (Page) -> Unit = { page = it }
@@ -97,7 +98,10 @@ fun TripGuard(vm: TripGuardViewModel = viewModel()) {
                     Page.HISTORY -> History(vm.history, { page = Page.INSPECTION })
                     Page.JOURNEY -> Journey(vm.journey, vm::startJourney, vm::endJourney)
                     Page.RESCUE -> Rescue()
-                    Page.SETTINGS -> Settings()
+                    Page.SETTINGS -> Settings({ page = Page.PRIVACY }, { page = Page.CAPABILITIES })
+                    Page.WELCOME -> Welcome { page = Page.HOME }
+                    Page.CAPABILITIES -> Capabilities()
+                    Page.PRIVACY -> Privacy { vm.clearPreview(); selectedId = null; editingId = null; page = Page.HOME }
                 }
             }
         }
@@ -271,16 +275,49 @@ private fun Rescue() {
             text = { Text("You must choose to place the call. TripGuard cannot confirm delivery or dispatch.") },
             confirmButton = { TextButton(onClick = {
                 confirmNumber = null
-                try { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))); error = false }
+                try { context.startActivity(Intent(Intent.ACTION_DIAL, "tel:$number".toUri())); error = false }
                 catch (_: android.content.ActivityNotFoundException) { error = true }
             }) { Text("Open dialer") } },
             dismissButton = { TextButton(onClick = { confirmNumber = null }) { Text("Cancel") } })
     }
 }
 @Composable
-private fun Settings() = Body {
+private fun Settings(privacy: () -> Unit, capabilities: () -> Unit) = Body {
+    item { ActionCard("Privacy and local data", "Review or clear this session.", "Manage local data", privacy) }
+    item { ActionCard("Vehicle capabilities", "Understand supported and unavailable checks.", "View capabilities", capabilities) }
     item { Text("Local preview", style = MaterialTheme.typography.headlineSmall) }
     item { Text("No account, internet permission or cloud synchronisation. Data is in memory and is lost when the process ends.") }
     item { Text("Device integrations, AI diagnosis and remote Guardian functionality are not available in this build.") }
     item { Text("Safety limitation: TripGuard is not a replacement for professional inspections, manufacturer warnings or emergency services.") }
+}
+
+@Composable
+private fun Welcome(continueLocal: () -> Unit) = Body {
+    item { Text("TripGuard", style = MaterialTheme.typography.headlineLarge) }
+    item { Text("Prevent • Detect • Protect", style = MaterialTheme.typography.titleLarge) }
+    item { Text("Prepare for journeys with guided visual checks and emergency guidance. No account is required.") }
+    item { Text("This preview uses session-only data. It does not detect hidden mechanical faults, track your journey or dispatch help.") }
+    item { Button(onClick = continueLocal, modifier = Modifier.fillMaxWidth()) { Text("Continue locally") } }
+}
+@Composable
+private fun Capabilities() = Body {
+    item { Text("Supported in this preview", style = MaterialTheme.typography.titleLarge) }
+    item { Text("Manual vehicle profiles, stationary visual observations and local destination recording.") }
+    item { Text("Not available", style = MaterialTheme.typography.titleLarge) }
+    item { Text("Camera diagnosis, live sensor data, GPS sharing, automatic emergency dispatch and background monitoring.") }
+    item { Text("Vehicle-specific checks depend on equipment fitted. Follow the manufacturer's manual; unknown checks cannot establish safety.") }
+}
+@Composable
+private fun Privacy(clear: () -> Unit) {
+    var confirm by remember { mutableStateOf(false) }
+    Body {
+        item { Text("Your preview data", style = MaterialTheme.typography.titleLarge) }
+        item { Text("Vehicle profiles, inspection summaries and destination are held in memory. No cloud transmission or account.") }
+        item { OutlinedButton(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth()) { Text("Clear all preview data") } }
+    }
+    if (confirm) AlertDialog(onDismissRequest = { confirm = false },
+        title = { Text("Clear this session?") },
+        text = { Text("All vehicle profiles, observations and the active destination will be removed. This cannot be undone.") },
+        confirmButton = { TextButton(onClick = { confirm = false; clear() }) { Text("Clear data") } },
+        dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } })
 }
