@@ -304,7 +304,10 @@ private fun Rescue() {
         item { ActionCard("112 • India emergency", "Police, fire or medical emergency. Opens your phone dialer; no call is made automatically.", "Open 112 dialer") { confirmNumber = "112" } }
         item { ActionCard("1033 • National highways", "For applicable national highway assistance in India. Availability depends on location and network.", "Open 1033 dialer") { confirmNumber = "1033" } }
         item { Text("No network? Calls and messages may be unavailable. Do not assume help has been notified. Use safe alternatives or seek nearby assistance when possible.") }
-        item { Text("GPS and automated dispatch are not implemented in this preview.") }
+        item { EmergencyLocation() }
+        item { Text("Automated dispatch is not implemented. Sharing is user-controlled.") }
+        item { Text("Overheating or steam: stop safely, switch off the engine, follow the manufacturer manual and seek assistance. Never open a hot coolant cap.") }
+        item { Text("Tyre or brake concern: stop safely and arrange professional assistance; do not rely on a visual check to continue.") }
         if (error) item { Text("No dialer available. Use another phone if possible.", color = MaterialTheme.colorScheme.error) }
     }
     confirmNumber?.let { number ->
@@ -333,7 +336,7 @@ private fun Welcome(continueLocal: () -> Unit) = Body {
     item { Text("TripGuard", style = MaterialTheme.typography.headlineLarge) }
     item { Text("Prevent • Detect • Protect", style = MaterialTheme.typography.titleLarge) }
     item { Text("Prepare for journeys with guided visual checks and emergency guidance. No account is required.") }
-    item { Text("This preview stores records locally. It does not detect hidden mechanical faults, track your journey or dispatch help.") }
+    item { Text("This preview stores records locally. It does not detect hidden mechanical faults, track your journey or dispatch help. Emergency location is optional.") }
     item { Button(onClick = continueLocal, modifier = Modifier.fillMaxWidth()) { Text("Continue locally") } }
 }
 @Composable
@@ -341,7 +344,7 @@ private fun Capabilities() = Body {
     item { Text("Supported in this preview", style = MaterialTheme.typography.titleLarge) }
     item { Text("Manual vehicle profiles, stationary visual observations and local destination recording.") }
     item { Text("Not available", style = MaterialTheme.typography.titleLarge) }
-    item { Text("Camera diagnosis, live sensor data, GPS sharing, automatic emergency dispatch and background monitoring.") }
+    item { Text("Camera diagnosis, live sensor data, automatic emergency dispatch and background monitoring. Foreground location sharing is available only when you request it.") }
     item { Text("Vehicle-specific checks depend on equipment fitted. Follow the manufacturer's manual; unknown checks cannot establish safety.") }
 }
 @Composable
