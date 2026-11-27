@@ -930,3 +930,80 @@ extractFromPlateImage = async function (file) {
     setOcrStatus("mPlateStatus", "Could not auto-read plate — please type number manually.", "warn");
   }
 };
+
+// --- Smarter Make & Model inference from RC text (auto-appended) ---
+const MODEL_TO_MAKE = {
+  "I20": "Hyundai",
+  "GRAND I10": "Hyundai",
+  "NIOS": "Hyundai",
+  "VENUE": "Hyundai",
+  "CRETA": "Hyundai",
+  "VERNA": "Hyundai",
+  "EXTER": "Hyundai",
+  "AURA": "Hyundai",
+  "SWIFT": "Maruti Suzuki",
+  "BALENO": "Maruti Suzuki",
+  "DZIRE": "Maruti Suzuki",
+  "BREZZA": "Maruti Suzuki",
+  "ERTIGA": "Maruti Suzuki",
+  "ALTO": "Maruti Suzuki",
+  "WAGON R": "Maruti Suzuki",
+  "FRONX": "Maruti Suzuki",
+  "NEXON": "Tata",
+  "PUNCH": "Tata",
+  "HARRIER": "Tata",
+  "SAFARI": "Tata",
+  "ALTROZ": "Tata",
+  "TIAGO": "Tata",
+  "TIGOR": "Tata",
+  "THAR": "Mahindra",
+  "SCORPIO": "Mahindra",
+  "XUV700": "Mahindra",
+  "XUV300": "Mahindra",
+  "XUV 3XO": "Mahindra",
+  "BOLERO": "Mahindra",
+  "CITY": "Honda",
+  "AMAZE": "Honda",
+  "ELEVATE": "Honda",
+  "INNOVA": "Toyota",
+  "FORTUNER": "Toyota",
+  "GLANZA": "Toyota",
+  "SELTOS": "Kia",
+  "SONET": "Kia",
+  "CARENS": "Kia",
+  "HECTOR": "MG",
+  "ASTOR": "MG",
+  "COMET": "MG",
+  "VIRTUS": "Volkswagen",
+  "TAIGUN": "Volkswagen",
+  "POLO": "Volkswagen",
+  "SLAVIA": "Skoda",
+  "KUSHAQ": "Skoda",
+  "KIGER": "Renault",
+  "MAGNITE": "Nissan"
+};
+
+const _origParseRcFieldsFromText = parseRcFieldsFromText;
+parseRcFieldsFromText = function (rawText) {
+  const res = _origParseRcFieldsFromText(rawText);
+  const compact = (rawText || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+  if (!res.model) {
+    for (const [mdl, mk] of Object.entries(MODEL_TO_MAKE)) {
+      const compactMdl = mdl.replace(/[^A-Z0-9]/g, "");
+      if (compactMdl.length >= 3 && compact.includes(compactMdl)) {
+        res.model = mdl.length <= 3 ? mdl.toUpperCase() : toTitleCase(mdl);
+        if (!res.make) res.make = mk;
+        break;
+      }
+    }
+  } else if (!res.make && MODEL_TO_MAKE[res.model.toUpperCase()]) {
+    res.make = MODEL_TO_MAKE[res.model.toUpperCase()];
+  }
+
+  if (!res.make && compact.includes("HYUND")) {
+    res.make = "Hyundai";
+  }
+
+  return res;
+};
