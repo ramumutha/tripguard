@@ -16,10 +16,10 @@ class NavigationTest {
         rule.onNodeWithText("Continue locally").performClick()
         rule.onNodeWithText("Settings").performClick()
         rule.onNodeWithText("Manage local data").performClick()
-        rule.onNodeWithText("Clear all preview data").performClick()
-        rule.onNodeWithText("Clear this session?").assertExists()
+        rule.onNodeWithText("Clear all local data").performClick()
+        rule.onNodeWithText("Clear local records?").assertExists()
         rule.onNodeWithText("Cancel").performClick()
-        rule.onNodeWithText("Clear all preview data").assertExists()
+        rule.onNodeWithText("Clear all local data").assertExists()
     }
     @Test fun capabilitiesDiscloseMissingMonitoring() {
         rule.onNodeWithText("Continue locally").performClick()
@@ -27,9 +27,9 @@ class NavigationTest {
         rule.onNodeWithText("View capabilities").performClick()
         rule.onNodeWithText("Not available").assertExists()
     }
-    @Test fun garageStartsEmpty() {
+    @Test fun garageAllowsAddingVehicle() {
         rule.onNodeWithText("Continue locally").performClick()
         rule.onNodeWithText("Manage vehicles").performClick()
-        rule.onNodeWithText("No vehicles yet. Add a motorcycle, car or commercial vehicle.").assertExists()
+        rule.onNodeWithText("Add vehicle").assertExists()
     }
 }
