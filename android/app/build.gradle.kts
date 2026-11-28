@@ -1,7 +1,6 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.kapt")
-    id("org.jetbrains.kotlin.android")
+    id("com.google.devtools.ksp")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 android {
@@ -21,13 +20,13 @@ android {
     }
     buildFeatures { compose = true }
 }
-kotlin { jvmToolchain(17) }
-kapt { arguments { arg("room.schemaLocation", "$projectDir/schemas") } }
+java { toolchain { languageVersion.set(JavaLanguageVersion.of(25)) } }
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 dependencies {
     implementation(project(":domain"))
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
-    kapt("androidx.room:room-compiler:2.8.4")
+    ksp("androidx.room:room-compiler:2.8.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.4")
     implementation(platform("androidx.compose:compose-bom:2025.10.00"))
     implementation("androidx.activity:activity-compose:1.10.1")
