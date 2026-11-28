@@ -92,7 +92,7 @@ class TripGuardViewModel(application: Application) : AndroidViewModel(applicatio
     fun removeContact(id: String, after: () -> Unit) = change(after) { dao.deleteContact(id) }
     fun clearPreview(after: () -> Unit) = change(after) { dao.clearAll() }
 }
-enum class Page(val title: String) { CONTACTS("Trusted contacts"), PREPARE("Journey preparedness"), REST_STOP("Rest-stop check"), WELCOME("Welcome"), CAPABILITIES("Vehicle capabilities"), PRIVACY("Privacy and local data"), HOME("Home"), GARAGE("Garage"), ADD("Vehicle profile"),
+enum class Page(val title: String) { RC_CAPTURE("RC capture"), VISUAL_CAPTURE("Visual capture"), CONTACTS("Trusted contacts"), PREPARE("Journey preparedness"), REST_STOP("Rest-stop check"), WELCOME("Welcome"), CAPABILITIES("Vehicle capabilities"), PRIVACY("Privacy and local data"), HOME("Home"), GARAGE("Garage"), ADD("Vehicle profile"),
     INSPECTION("Safety inspection"), HISTORY("Inspection history"), JOURNEY("Journey"),
     RESCUE("Emergency assistance"), SETTINGS("Settings") }
 
@@ -103,7 +103,7 @@ fun TripGuard(vm: TripGuardViewModel = viewModel()) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     val navigate: (Page) -> Unit = { page = it }
-    BackHandler(page != Page.HOME) { page = when (page) { Page.ADD -> Page.GARAGE; Page.PREPARE, Page.REST_STOP -> Page.JOURNEY; Page.CONTACTS -> Page.RESCUE; else -> Page.HOME } }
+    BackHandler(page != Page.HOME) { page = when (page) { Page.ADD -> Page.GARAGE; Page.RC_CAPTURE -> Page.GARAGE; Page.VISUAL_CAPTURE -> Page.INSPECTION; Page.PREPARE, Page.REST_STOP -> Page.JOURNEY; Page.CONTACTS -> Page.RESCUE; else -> Page.HOME } }
     Scaffold(
         topBar = { TopAppBar(title = { Text(if (page == Page.HOME) "TripGuard" else page.title) },
             actions = { if (page != Page.RESCUE) TextButton(onClick = { page = Page.RESCUE }) { Text("SOS") } }) },
@@ -129,15 +129,17 @@ fun TripGuard(vm: TripGuardViewModel = viewModel()) {
                     Column(Modifier.padding(16.dp)) { Text("Local storage is loading or unavailable."); if (vm.failure != null) Text("Restart the app to retry.") }
                 } else when(page) {
                     Page.HOME -> Home(vm.vehicles.size, navigate)
-                    Page.GARAGE -> Garage(vm.vehicles, { editingId = null; page = Page.ADD },
+                    Page.GARAGE -> Garage(vm.vehicles, { editingId = null; page = Page.ADD }, { page = Page.RC_CAPTURE },
                         { editingId = it.id; page = Page.ADD }, { selectedId = it.id; page = Page.INSPECTION })
                     Page.ADD -> VehicleForm(vm.vehicles.firstOrNull { it.id == editingId }, {
                         vm.save(it) { page = Page.GARAGE }
                     }, { vm.remove(it) { page = Page.GARAGE } }, { page = Page.GARAGE })
                     Page.INSPECTION -> Inspection(vm.vehicles, selectedId, {
                         vm.record(it) { page = Page.HISTORY }
-                    }, { editingId = null; page = Page.ADD })
+                    }, { editingId = null; page = Page.ADD }, { page = Page.VISUAL_CAPTURE })
                     Page.HISTORY -> History(vm.history, { page = Page.INSPECTION })
+                    Page.RC_CAPTURE -> CapturePreview(true) { editingId = null; page = Page.ADD }
+                    Page.VISUAL_CAPTURE -> CapturePreview(false) { page = Page.INSPECTION }
                     Page.JOURNEY -> Journey(vm.journey, vm.completedJourneys, vm::startJourney, vm::endJourney, { page = Page.PREPARE }, { page = Page.REST_STOP })
                     Page.PREPARE -> JourneyPreparation { page = Page.JOURNEY }
                     Page.REST_STOP -> RestStop { selectedId = null; page = Page.INSPECTION }
@@ -182,8 +184,9 @@ private fun Home(count: Int, navigate: (Page) -> Unit) = Body {
     item { ActionCard("Emergency assistance", "Access guidance without signing in.", "Open emergency assistance") { navigate(Page.RESCUE) } }
 }
 @Composable
-private fun Garage(vehicles: List<Vehicle>, add: () -> Unit, edit: (Vehicle) -> Unit, inspect: (Vehicle) -> Unit) = Body {
+private fun Garage(vehicles: List<Vehicle>, add: () -> Unit, capture: () -> Unit, edit: (Vehicle) -> Unit, inspect: (Vehicle) -> Unit) = Body {
     item { Button(onClick = add, modifier = Modifier.fillMaxWidth()) { Text("Add vehicle") } }
+    item { OutlinedButton(onClick = capture, modifier = Modifier.fillMaxWidth()) { Text("Optional RC capture") } }
     if (vehicles.isEmpty()) item { Text("No vehicles yet. Add a motorcycle, car or commercial vehicle.") }
     items(vehicles, key = { it.id }) { v ->
         Card(Modifier.fillMaxWidth()) {
@@ -223,7 +226,7 @@ private fun VehicleForm(existing: Vehicle?, save: (Vehicle) -> Unit, remove: (St
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } })
 }
 @Composable
-private fun Inspection(vehicles: List<Vehicle>, initialId: String?, save: (InspectionPreview) -> Unit, add: () -> Unit) {
+private fun Inspection(vehicles: List<Vehicle>, initialId: String?, save: (InspectionPreview) -> Unit, add: () -> Unit, capture: () -> Unit) {
     var chosen by rememberSaveable { mutableStateOf(initialId ?: vehicles.firstOrNull()?.id) }
     val vehicle = vehicles.firstOrNull { it.id == chosen }
     val observations = remember(chosen) { mutableStateMapOf<String, Observation>() }
@@ -236,6 +239,7 @@ private fun Inspection(vehicles: List<Vehicle>, initialId: String?, save: (Inspe
             items(vehicles, key = { it.id }) { v -> Row(verticalAlignment = Alignment.CenterVertically) {
                 RadioButton(selected = chosen == v.id, onClick = { chosen = v.id }); Text(v.name)
             } }
+            item { OutlinedButton(onClick = capture, modifier = Modifier.fillMaxWidth()) { Text("Preview visual capture") } }
             item { Text("Only inspect while safely parked. Follow the owner's manual. Unknown checks do not count as completed.") }
             items(checks, key = { it.id }) { check ->
                 Card(Modifier.fillMaxWidth()) {
@@ -387,7 +391,7 @@ private fun Capabilities() = Body {
     item { Text("Supported in this preview", style = MaterialTheme.typography.titleLarge) }
     item { Text("Manual vehicle profiles, stationary visual observations and local destination recording.") }
     item { Text("Not available", style = MaterialTheme.typography.titleLarge) }
-    item { Text("Camera diagnosis, live sensor data, automatic emergency dispatch and background monitoring. Foreground location sharing is available only when you request it.") }
+    item { Text("Automated camera diagnosis, live sensor data, automatic emergency dispatch and background monitoring. Foreground location sharing is available only when you request it.") }
     item { Text("Vehicle-specific checks depend on equipment fitted. Follow the manufacturer's manual; unknown checks cannot establish safety.") }
 }
 @Composable
