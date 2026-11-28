@@ -2,6 +2,8 @@ package com.spenmer.tripguard
 
 import android.Manifest
 import android.content.Context
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
@@ -17,12 +19,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
-import androidx.core.os.CancellationSignal
+import android.os.CancellationSignal
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import java.util.Locale
 
 @Composable
 fun EmergencyLocation() {
     val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     val manager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     var fix by remember { mutableStateOf<Location?>(null) }
     var status by remember { mutableStateOf("Location not requested.") }
@@ -38,8 +44,16 @@ fun EmergencyLocation() {
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         if (result.values.any { it }) request++ else status = "Permission denied. You can still call for help."
     }
-    DisposableEffect(request) {
+    DisposableEffect(request, lifecycle) {
         val signal = CancellationSignal()
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP && pending) {
+                signal.cancel()
+                pending = false
+                status = "Location request stopped. Request again when the app is visible."
+            }
+        }
+        lifecycle.addObserver(observer)
         if (request > 0) {
             fix = null
             try {
@@ -63,7 +77,7 @@ fun EmergencyLocation() {
                 status = "Location unavailable. You can still use emergency assistance."
             }
         }
-        onDispose { signal.cancel() }
+        onDispose { lifecycle.removeObserver(observer); signal.cancel() }
     }
     val location = fix
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -82,6 +96,11 @@ fun EmergencyLocation() {
             val freshness = if (age > 60) "STALE location" else "Location fix"
             Text("$freshness: $coords")
             Text("$accuracy • $age seconds old")
+            OutlinedButton(onClick = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("TripGuard location", "$freshness: $coords; $accuracy; fix age $age seconds."))
+                status = "Location copied. Nothing has been sent."
+            }, modifier = Modifier.fillMaxWidth()) { Text("Copy location details") }
             OutlinedButton(onClick = {
                 val message = "TripGuard: I may need assistance. $freshness: $coords. $accuracy; fix age $age seconds. Please verify my location. No automatic dispatch."
                 try { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
