@@ -1,20 +1,18 @@
-# TripGuard Android UI preview
-Native Kotlin / Compose, separate pure Kotlin domain module. Existing FastAPI/web source unchanged. This is a development-only session-memory preview, not production safety software. No internet permission. Do not use actual personal details in preview. Never place test calls to emergency numbers.
+# TripGuard Android development preview
+Native Kotlin / Compose with a pure Kotlin domain module and Room local database. Existing Python/web source remains unchanged. This is development-only software, not qualified safety software. No internet permission. Use synthetic test data. Never place test calls to emergency numbers.
+
 ## Build prerequisites
-Android Studio, JDK 17, Android SDK API 36, Gradle 8.13. Initial dependency pins require clean-build validation. Wrapper not committed yet: use installed Gradle or Android Studio to generate wrapper, then run local validation.
-From repository root in PowerShell:
+Modernization candidate: existing JDK 25, Gradle 9.7.0, AGP 9.3.1, Kotlin 2.4.21, KSP 2.3.12, Android SDK API 36. Android minimum API 26 and Java 17 bytecode target remain unchanged. Automatic JDK provisioning disabled. Candidate not yet build-qualified; verified legacy baseline ec1997cc6de467b907c13dba64c5f95174d48757 used JDK 17/Gradle 8.13.
+
+Windows validation from repository root:
 ```powershell
-Set-Location D:\Projects\tripguard-api
-git status --short
-git branch --show-current
-# Only with clean tree and intended branch:
-git pull --ff-only origin feat/society-pilot-polish
+. "D:\DevTools\Enter-DevEnvironment.ps1" -ProjectName TRIPGUARD
+$env:JAVA_HOME = $env:JAVA25_HOME
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
 Set-Location android
-gradle wrapper --gradle-version 8.13
-.\gradlew.bat :domain:test :app:assembleDebug :app:lintDebug
-# With emulator or test phone connected:
-.\gradlew.bat :app:connectedDebugAndroidTest
+& "D:\DevTools\Gradle\gradle-9.7.0\bin\gradle.bat" :domain:test :app:assembleDebug :app:lintDebug :app:assembleDebugAndroidTest --no-daemon --console=plain
 ```
-First dependency resolution requires internet; no paid service required. Do not commit local.properties, signing keys or build outputs. APK path app/build/outputs/apk/debug/app-debug.apk.
-## Current scope
-Home, garage list, add/edit/delete vehicle, vehicle-type/propulsion checklist, unknown/potential/critical observations, history, destination-only journey, emergency dialer confirmation, settings. Session-only data survives activity recreation via ViewModel but not process death. No GPS, camera, real device, Room persistence, remote alerts, account, production signing or dispatch. All builds and tests pending execution. Five domain tests and two instrumentation tests authored.
+First dependency resolution requires internet. Wrapper not committed; use the verified installed Gradle. Do not commit local.properties, signing keys or build outputs. Preserve governed Room v1/v2 schema identities. Inspect lint and test evidence. Device test execution requires a dedicated test phone or emulator and synthetic data; privacy actions can remove local test records.
+
+## Scope and status
+Local vehicle profiles, guided component observations and inspection summaries, local journeys, trusted contacts, foreground location and manual dial/share, image preview and future-feature mock interfaces. No qualified OCR or AI model, persistent photo evidence, remote Guardian, telemetry or emergency dispatch. All 50 inventory IDs represented at source level, not fully qualified. See ../docs/STATUS.md for receipts and current limitations.
