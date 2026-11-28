@@ -41,22 +41,25 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private data class LocalSnapshot(val vehicles: List<Vehicle>, val history: List<InspectionPreview>, val journey: String?, val contacts: List<TrustedContactRow>, val completed: List<CompletedJourneyRow>)
 data class InspectionPreview(val vehicle: String, val finding: Finding, val completed: Int, val total: Int)
 class TripGuardViewModel(application: Application) : AndroidViewModel(application) {
     private val dao = LocalDatabase.get(application).dao()
     var vehicles by mutableStateOf(emptyList<Vehicle>()); private set
     var history by mutableStateOf(emptyList<InspectionPreview>()); private set
     var journey by mutableStateOf<String?>(null); private set
+    var contacts by mutableStateOf(emptyList<TrustedContactRow>()); private set
+    var completedJourneys by mutableStateOf(emptyList<CompletedJourneyRow>()); private set
     var ready by mutableStateOf(false); private set
     var busy by mutableStateOf(false); private set
     var failure by mutableStateOf<String?>(null); private set
     init {
         viewModelScope.launch {
             try {
-                combine(dao.vehicles(), dao.inspections(), dao.journey()) { v, h, j ->
-                    Triple(v.map { it.domain() }, h.map { InspectionPreview(it.vehicle, Finding.valueOf(it.finding), it.completed, it.total) }, j?.destination)
-                }.collect { (v, h, j) ->
-                    vehicles = v; history = h; journey = j; ready = true
+                combine(dao.vehicles(), dao.inspections(), dao.journey(), dao.contacts(), dao.completedJourneys()) { v, h, j, contacts, completed ->
+                    LocalSnapshot(v.map { it.domain() }, h.map { InspectionPreview(it.vehicle, Finding.valueOf(it.finding), it.completed, it.total) }, j?.destination, contacts, completed)
+                }.collect { snapshot ->
+                    vehicles = snapshot.vehicles; history = snapshot.history; journey = snapshot.journey; contacts = snapshot.contacts; completedJourneys = snapshot.completed; ready = true
                 }
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { ready = false; failure = "Local records unavailable. Restart the app to retry." }
@@ -84,10 +87,12 @@ class TripGuardViewModel(application: Application) : AndroidViewModel(applicatio
     fun startJourney(destination: String) = change {
         check(dao.start(JourneyRow(destination = destination, startedAt = System.currentTimeMillis())) != -1L)
     }
-    fun endJourney() = change { dao.end() }
+    fun endJourney() = change { dao.end(System.currentTimeMillis()) }
+    fun saveContact(row: TrustedContactRow, after: () -> Unit) = change(after) { dao.saveContact(row) }
+    fun removeContact(id: String, after: () -> Unit) = change(after) { dao.deleteContact(id) }
     fun clearPreview(after: () -> Unit) = change(after) { dao.clearAll() }
 }
-enum class Page(val title: String) { WELCOME("Welcome"), CAPABILITIES("Vehicle capabilities"), PRIVACY("Privacy and local data"), HOME("Home"), GARAGE("Garage"), ADD("Vehicle profile"),
+enum class Page(val title: String) { CONTACTS("Trusted contacts"), PREPARE("Journey preparedness"), REST_STOP("Rest-stop check"), WELCOME("Welcome"), CAPABILITIES("Vehicle capabilities"), PRIVACY("Privacy and local data"), HOME("Home"), GARAGE("Garage"), ADD("Vehicle profile"),
     INSPECTION("Safety inspection"), HISTORY("Inspection history"), JOURNEY("Journey"),
     RESCUE("Emergency assistance"), SETTINGS("Settings") }
 
@@ -98,7 +103,7 @@ fun TripGuard(vm: TripGuardViewModel = viewModel()) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     val navigate: (Page) -> Unit = { page = it }
-    BackHandler(page != Page.HOME) { page = if (page == Page.ADD) Page.GARAGE else Page.HOME }
+    BackHandler(page != Page.HOME) { page = when (page) { Page.ADD -> Page.GARAGE; Page.PREPARE, Page.REST_STOP -> Page.JOURNEY; Page.CONTACTS -> Page.RESCUE; else -> Page.HOME } }
     Scaffold(
         topBar = { TopAppBar(title = { Text(if (page == Page.HOME) "TripGuard" else page.title) },
             actions = { if (page != Page.RESCUE) TextButton(onClick = { page = Page.RESCUE }) { Text("SOS") } }) },
@@ -133,9 +138,12 @@ fun TripGuard(vm: TripGuardViewModel = viewModel()) {
                         vm.record(it) { page = Page.HISTORY }
                     }, { editingId = null; page = Page.ADD })
                     Page.HISTORY -> History(vm.history, { page = Page.INSPECTION })
-                    Page.JOURNEY -> Journey(vm.journey, vm::startJourney, vm::endJourney)
-                    Page.RESCUE -> Rescue()
-                    Page.SETTINGS -> Settings({ page = Page.PRIVACY }, { page = Page.CAPABILITIES })
+                    Page.JOURNEY -> Journey(vm.journey, vm.completedJourneys, vm::startJourney, vm::endJourney, { page = Page.PREPARE }, { page = Page.REST_STOP })
+                    Page.PREPARE -> JourneyPreparation { page = Page.JOURNEY }
+                    Page.REST_STOP -> RestStop { selectedId = null; page = Page.INSPECTION }
+                    Page.CONTACTS -> TrustedContacts(vm.contacts, vm.busy, vm::saveContact, vm::removeContact)
+                    Page.RESCUE -> Rescue { page = Page.CONTACTS }
+                    Page.SETTINGS -> Settings({ page = Page.PRIVACY }, { page = Page.CAPABILITIES }, { page = Page.CONTACTS })
                     Page.WELCOME -> Welcome { page = Page.HOME }
                     Page.CAPABILITIES -> Capabilities()
                     Page.PRIVACY -> Privacy { vm.clearPreview { selectedId = null; editingId = null; page = Page.HOME } }
@@ -277,24 +285,57 @@ private fun History(history: List<InspectionPreview>, inspect: () -> Unit) = Bod
     item { Button(onClick = inspect, modifier = Modifier.fillMaxWidth()) { Text("New inspection") } }
 }
 @Composable
-private fun Journey(active: String?, start: (String) -> Unit, end: () -> Unit) {
+private fun Journey(active: String?, completed: List<CompletedJourneyRow>, start: (String) -> Unit, end: () -> Unit, prepare: () -> Unit, restStop: () -> Unit) {
+    var confirmEnd by remember { mutableStateOf(false) }
     var destination by rememberSaveable { mutableStateOf("") }
     Body {
         item { Text("Journey preview", style = MaterialTheme.typography.headlineSmall) }
-        item { Text("This records a destination only. No background tracking, location sharing or remote check-ins are active.") }
+        item { Text("Local destination and journey times only. No background tracking, location sharing or remote check-ins are active.") }
         if (active == null) {
+            item { ActionCard("Prepare before travel", "Review offline travel preparedness.", "Review preparedness", prepare) }
             item { OutlinedTextField(destination, { destination = it }, label = { Text("Destination") }, modifier = Modifier.fillMaxWidth()) }
             item { Button(onClick = { start(destination.trim()) }, enabled = destination.isNotBlank() && destination.length <= 120,
                 modifier = Modifier.fillMaxWidth()) { Text("Start local journey preview") } }
         } else {
             item { Text("Destination: $active", style = MaterialTheme.typography.titleLarge) }
             item { Text("At safe rest stops, review warning lights and visible signs of vehicle trouble. Never handle the phone while driving.") }
-            item { Button(onClick = end, modifier = Modifier.fillMaxWidth()) { Text("End journey preview") } }
+            item { OutlinedButton(onClick = restStop, modifier = Modifier.fillMaxWidth()) { Text("Review rest-stop checks") } }
+            item { Button(onClick = { confirmEnd = true }, modifier = Modifier.fillMaxWidth()) { Text("End journey preview") } }
+        }
+        item { Text("Completed journeys", style = MaterialTheme.typography.titleLarge) }
+        if (completed.isEmpty()) item { Text("No completed journeys yet.") }
+        items(completed, key = { it.id }) { record ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(record.destination, style = MaterialTheme.typography.titleMedium)
+                    Text("Started: " + java.text.DateFormat.getDateTimeInstance().format(java.util.Date(record.startedAt)))
+                    Text("Ended: " + java.text.DateFormat.getDateTimeInstance().format(java.util.Date(record.endedAt)))
+                    Text("Recorded locally; arrival not independently verified.")
+                }
+            }
         }
     }
+    if (confirmEnd) AlertDialog(onDismissRequest = { confirmEnd = false }, title = { Text("End this journey?") },
+        text = { Text("Record the end of your local journey. This does not verify arrival or notify anyone.") },
+        confirmButton = { TextButton(onClick = { confirmEnd = false; end() }) { Text("End journey") } },
+        dismissButton = { TextButton(onClick = { confirmEnd = false }) { Text("Cancel") } })
 }
 @Composable
-private fun Rescue() {
+private fun JourneyPreparation(back: () -> Unit) = Body {
+    item { Text("Prepare before departure", style = MaterialTheme.typography.headlineSmall) }
+    item { Text("Review your owner's manual, fuel or charge, tyre condition, warning lights and required professional maintenance.") }
+    item { Text("Plan suitable rest stops and assistance options. Save essential contact numbers and offline directions before departure.") }
+    item { Text("This is a manual checklist, not live route, weather, traffic or roadworthiness assessment.") }
+    item { Button(onClick = back, modifier = Modifier.fillMaxWidth()) { Text("Back to journey") } }
+}
+@Composable
+private fun RestStop(inspect: () -> Unit) = Body {
+    item { Text("Check only when safely parked", style = MaterialTheme.typography.headlineSmall) }
+    item { Text("Review dashboard warnings and unusual smells, leaks or visible damage. Never open a hot coolant cap. Stop travel and seek qualified assistance for critical concerns.") }
+    item { Button(onClick = inspect, modifier = Modifier.fillMaxWidth()) { Text("Open safety inspection") } }
+}
+@Composable
+private fun Rescue(contacts: () -> Unit) {
     val context = LocalContext.current
     var confirmNumber by rememberSaveable { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf(false) }
@@ -305,6 +346,7 @@ private fun Rescue() {
         item { ActionCard("1033 • National highways", "For applicable national highway assistance in India. Availability depends on location and network.", "Open 1033 dialer") { confirmNumber = "1033" } }
         item { Text("No network? Calls and messages may be unavailable. Do not assume help has been notified. Use safe alternatives or seek nearby assistance when possible.") }
         item { EmergencyLocation() }
+        item { ActionCard("Trusted contacts", "Open a saved contact dialer manually. No automated alerts.", "Manage trusted contacts", contacts) }
         item { Text("Automated dispatch is not implemented. Sharing is user-controlled.") }
         item { Text("Overheating or steam: stop safely, switch off the engine, follow the manufacturer manual and seek assistance. Never open a hot coolant cap.") }
         item { Text("Tyre or brake concern: stop safely and arrange professional assistance; do not rely on a visual check to continue.") }
@@ -322,7 +364,8 @@ private fun Rescue() {
     }
 }
 @Composable
-private fun Settings(privacy: () -> Unit, capabilities: () -> Unit) = Body {
+private fun Settings(privacy: () -> Unit, capabilities: () -> Unit, contacts: () -> Unit) = Body {
+    item { ActionCard("Trusted contacts", "Manage local emergency contacts.", "Manage trusted contacts", contacts) }
     item { ActionCard("Privacy and local data", "Review or clear local records.", "Manage local data", privacy) }
     item { ActionCard("Vehicle capabilities", "Understand supported and unavailable checks.", "View capabilities", capabilities) }
     item { Text("Local preview", style = MaterialTheme.typography.headlineSmall) }
@@ -352,12 +395,12 @@ private fun Privacy(clear: () -> Unit) {
     var confirm by remember { mutableStateOf(false) }
     Body {
         item { Text("Your preview data", style = MaterialTheme.typography.titleLarge) }
-        item { Text("Vehicle profiles, inspection summaries and the active destination are stored locally. No cloud transmission or account.") }
+        item { Text("Vehicle profiles, inspection summaries, journeys and trusted contacts are stored locally. No cloud transmission or account.") }
         item { OutlinedButton(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth()) { Text("Clear all local data") } }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false },
         title = { Text("Clear local records?") },
-        text = { Text("All vehicle profiles, observations and the active destination will be removed. This cannot be undone.") },
+        text = { Text("All vehicle profiles, observations, journeys and trusted contacts will be removed. This cannot be undone.") },
         confirmButton = { TextButton(onClick = { confirm = false; clear() }) { Text("Clear data") } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } })
 }
