@@ -27,6 +27,17 @@ class NavigationTest {
         rule.onNodeWithText("View capabilities").performClick()
         rule.onNodeWithText("Not available").assertExists()
     }
+    @Test fun rcCaptureAllowsManualFallbackWithoutCamera() {
+        rule.waitUntil(10000) { rule.onAllNodesWithText("Continue locally").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithText("Continue locally").performClick()
+        rule.onNodeWithText("Garage").performClick()
+        rule.onNodeWithText("Optional RC capture").performClick()
+        rule.onNodeWithText("Open camera").assertExists()
+        rule.onNodeWithText("No image captured.").assertExists()
+        rule.onNode(hasScrollAction()).performScrollToNode(hasText("Continue manually"))
+        rule.onNodeWithText("Continue manually").performClick()
+        rule.onNodeWithText("Vehicle nickname").assertExists()
+    }
     @Test fun garageAllowsAddingVehicle() {
         rule.onNodeWithText("Continue locally").performClick()
         rule.onNodeWithText("Manage vehicles").performClick()
