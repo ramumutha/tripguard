@@ -2,7 +2,7 @@
 Native Kotlin / Compose with a pure Kotlin domain module and Room local database. Existing Python/web source remains unchanged. This is development-only software, not qualified safety software. No internet permission. Use synthetic test data. Never place test calls to emergency numbers.
 
 ## Build prerequisites
-Modernization candidate: existing JDK 25, Gradle 9.7.0, AGP 9.3.1, Kotlin 2.4.21, KSP 2.3.12, Android SDK API 36. Android minimum API 26 and Java 17 bytecode target remain unchanged. Automatic JDK provisioning disabled. Candidate not yet build-qualified; verified legacy baseline ec1997cc6de467b907c13dba64c5f95174d48757 used JDK 17/Gradle 8.13.
+Qualified build baseline: existing JDK 25, Gradle 9.7.0, AGP 9.3.1, Kotlin 2.4.21, KSP 2.3.12, Android SDK API 36. Android minimum API 26 and Java 17 bytecode target remain unchanged. Automatic JDK provisioning disabled. Clean build qualified at 94cfc0f (8/8 JVM tests, both APKs, lint, schema identities, zero SDK XML/KAPT warnings); verified legacy baseline ec1997cc6de467b907c13dba64c5f95174d48757 used JDK 17/Gradle 8.13.
 
 Windows validation from repository root:
 ```powershell
