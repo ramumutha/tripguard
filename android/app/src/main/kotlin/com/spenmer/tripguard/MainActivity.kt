@@ -11,7 +11,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.mapSaver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -233,8 +235,15 @@ private fun VehicleForm(existing: Vehicle?, save: (Vehicle) -> Unit, remove: (St
 @Composable
 private fun Inspection(vehicles: List<Vehicle>, initialId: String?, save: (InspectionPreview) -> Unit, add: () -> Unit, capture: () -> Unit) {
     var chosen by rememberSaveable { mutableStateOf(initialId ?: vehicles.firstOrNull()?.id) }
+    LaunchedEffect(vehicles) { if (vehicles.none { it.id == chosen }) chosen = vehicles.firstOrNull()?.id }
     val vehicle = vehicles.firstOrNull { it.id == chosen }
-    val observations = remember(chosen) { mutableStateMapOf<String, Observation>() }
+    val observationSaver = mapSaver(
+        save = { state: SnapshotStateMap<String, Observation> -> state.mapValues { it.value.name } },
+        restore = { saved -> mutableStateMapOf<String, Observation>().apply {
+            saved.forEach { (key, value) -> this[key] = Observation.valueOf(value as String) }
+        } }
+    )
+    val observations = rememberSaveable(chosen, saver = observationSaver) { mutableStateMapOf<String, Observation>() }
     var detailId by rememberSaveable(chosen) { mutableStateOf<String?>(null) }
     var pendingVehicle by remember { mutableStateOf<String?>(null) }
     val checks = vehicle?.let(SafetyPolicy::checklist).orEmpty()
