@@ -239,7 +239,7 @@ private fun Inspection(vehicles: List<Vehicle>, initialId: String?, save: (Inspe
             items(vehicles, key = { it.id }) { v -> Row(verticalAlignment = Alignment.CenterVertically) {
                 RadioButton(selected = chosen == v.id, onClick = { chosen = v.id }); Text(v.name)
             } }
-            item { OutlinedButton(onClick = capture, modifier = Modifier.fillMaxWidth()) { Text("Preview visual capture") } }
+            item { OutlinedButton(onClick = capture, enabled = observations.isEmpty(), modifier = Modifier.fillMaxWidth()) { Text("Preview visual capture") }; if (observations.isNotEmpty()) Text("Finish or leave this checklist before opening the separate camera preview.") }
             item { Text("Only inspect while safely parked. Follow the owner's manual. Unknown checks do not count as completed.") }
             items(checks, key = { it.id }) { check ->
                 Card(Modifier.fillMaxWidth()) {
