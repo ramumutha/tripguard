@@ -92,7 +92,7 @@ class TripGuardViewModel(application: Application) : AndroidViewModel(applicatio
     fun removeContact(id: String, after: () -> Unit) = change(after) { dao.deleteContact(id) }
     fun clearPreview(after: () -> Unit) = change(after) { dao.clearAll() }
 }
-enum class Page(val title: String) { RC_CAPTURE("RC capture"), VISUAL_CAPTURE("Visual capture"), CONTACTS("Trusted contacts"), PREPARE("Journey preparedness"), REST_STOP("Rest-stop check"), WELCOME("Welcome"), CAPABILITIES("Vehicle capabilities"), PRIVACY("Privacy and local data"), HOME("Home"), GARAGE("Garage"), ADD("Vehicle profile"),
+enum class Page(val title: String) { FEATURES("Feature catalogue"), FEATURE("Feature preview"), RC_CAPTURE("RC capture"), VISUAL_CAPTURE("Visual capture"), CONTACTS("Trusted contacts"), PREPARE("Journey preparedness"), REST_STOP("Rest-stop check"), WELCOME("Welcome"), CAPABILITIES("Vehicle capabilities"), PRIVACY("Privacy and local data"), HOME("Home"), GARAGE("Garage"), ADD("Vehicle profile"),
     INSPECTION("Safety inspection"), HISTORY("Inspection history"), JOURNEY("Journey"),
     RESCUE("Emergency assistance"), SETTINGS("Settings") }
 
@@ -102,8 +102,10 @@ fun TripGuard(vm: TripGuardViewModel = viewModel()) {
     var page by rememberSaveable { mutableStateOf(Page.WELCOME) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
+    var feature by rememberSaveable { mutableStateOf(Feature.GUARDIAN) }
+    val openFeature: (Feature) -> Unit = { feature = it; page = Page.FEATURE }
     val navigate: (Page) -> Unit = { page = it }
-    BackHandler(page != Page.HOME) { page = when (page) { Page.ADD -> Page.GARAGE; Page.RC_CAPTURE -> Page.GARAGE; Page.VISUAL_CAPTURE -> Page.INSPECTION; Page.PREPARE, Page.REST_STOP -> Page.JOURNEY; Page.CONTACTS -> Page.RESCUE; else -> Page.HOME } }
+    BackHandler(page != Page.HOME) { page = when (page) { Page.FEATURE -> Page.FEATURES; Page.FEATURES -> Page.SETTINGS; Page.ADD -> Page.GARAGE; Page.RC_CAPTURE -> Page.GARAGE; Page.VISUAL_CAPTURE -> Page.INSPECTION; Page.PREPARE, Page.REST_STOP -> Page.JOURNEY; Page.CONTACTS -> Page.RESCUE; else -> Page.HOME } }
     Scaffold(
         topBar = { TopAppBar(title = { Text(if (page == Page.HOME) "TripGuard" else page.title) },
             actions = { if (page != Page.RESCUE) TextButton(onClick = { page = Page.RESCUE }) { Text("SOS") } }) },
@@ -129,6 +131,8 @@ fun TripGuard(vm: TripGuardViewModel = viewModel()) {
                     Column(Modifier.padding(16.dp)) { Text("Local storage is loading or unavailable."); if (vm.failure != null) Text("Restart the app to retry.") }
                 } else when(page) {
                     Page.HOME -> Home(vm.vehicles.size, navigate)
+                    Page.FEATURES -> FeatureCatalogue(openFeature)
+                    Page.FEATURE -> FeaturePreview(feature, openFeature) { page = Page.FEATURES }
                     Page.GARAGE -> Garage(vm.vehicles, { editingId = null; page = Page.ADD }, { page = Page.RC_CAPTURE },
                         { editingId = it.id; page = Page.ADD }, { selectedId = it.id; page = Page.INSPECTION })
                     Page.ADD -> VehicleForm(vm.vehicles.firstOrNull { it.id == editingId }, {
@@ -145,7 +149,7 @@ fun TripGuard(vm: TripGuardViewModel = viewModel()) {
                     Page.REST_STOP -> RestStop { selectedId = null; page = Page.INSPECTION }
                     Page.CONTACTS -> TrustedContacts(vm.contacts, vm.busy, vm::saveContact, vm::removeContact)
                     Page.RESCUE -> Rescue { page = Page.CONTACTS }
-                    Page.SETTINGS -> Settings({ page = Page.PRIVACY }, { page = Page.CAPABILITIES }, { page = Page.CONTACTS })
+                    Page.SETTINGS -> Settings({ page = Page.PRIVACY }, { page = Page.CAPABILITIES }, { page = Page.CONTACTS }, { page = Page.FEATURES })
                     Page.WELCOME -> Welcome { page = Page.HOME }
                     Page.CAPABILITIES -> Capabilities()
                     Page.PRIVACY -> Privacy { vm.clearPreview { selectedId = null; editingId = null; page = Page.HOME } }
@@ -182,6 +186,7 @@ private fun Home(count: Int, navigate: (Page) -> Unit) = Body {
     item { ActionCard("My journey", "Record a destination and prepare before departure.", "Plan journey") { navigate(Page.JOURNEY) } }
     item { ActionCard("Vehicle health", "Review observations stored on this device.", "View history") { navigate(Page.HISTORY) } }
     item { ActionCard("Emergency assistance", "Access guidance without signing in.", "Open emergency assistance") { navigate(Page.RESCUE) } }
+    item { ActionCard("Future features", "Explore clearly labelled previews of connected services.", "Explore future features") { navigate(Page.FEATURES) } }
 }
 @Composable
 private fun Garage(vehicles: List<Vehicle>, add: () -> Unit, capture: () -> Unit, edit: (Vehicle) -> Unit, inspect: (Vehicle) -> Unit) = Body {
@@ -368,7 +373,8 @@ private fun Rescue(contacts: () -> Unit) {
     }
 }
 @Composable
-private fun Settings(privacy: () -> Unit, capabilities: () -> Unit, contacts: () -> Unit) = Body {
+private fun Settings(privacy: () -> Unit, capabilities: () -> Unit, contacts: () -> Unit, features: () -> Unit) = Body {
+    item { ActionCard("Future features", "Explore non-operational feature previews.", "Explore future features", features) }
     item { ActionCard("Trusted contacts", "Manage local emergency contacts.", "Manage trusted contacts", contacts) }
     item { ActionCard("Privacy and local data", "Review or clear local records.", "Manage local data", privacy) }
     item { ActionCard("Vehicle capabilities", "Understand supported and unavailable checks.", "View capabilities", capabilities) }
