@@ -235,35 +235,36 @@ private fun Inspection(vehicles: List<Vehicle>, initialId: String?, save: (Inspe
     var chosen by rememberSaveable { mutableStateOf(initialId ?: vehicles.firstOrNull()?.id) }
     val vehicle = vehicles.firstOrNull { it.id == chosen }
     val observations = remember(chosen) { mutableStateMapOf<String, Observation>() }
+    var detailId by rememberSaveable(chosen) { mutableStateOf<String?>(null) }
+    var pendingVehicle by remember { mutableStateOf<String?>(null) }
     val checks = vehicle?.let(SafetyPolicy::checklist).orEmpty()
     val result = SafetyPolicy.assess(checks.map { observations[it.id] ?: Observation.UNKNOWN })
+    val detail = checks.firstOrNull { it.id == detailId }
+    if (detail != null) {
+        BackHandler { detailId = null }
+        InspectionComponent(detail, observations[detail.id] ?: Observation.UNKNOWN, { choice -> observations[detail.id] = choice; detailId = null }, { detailId = null })
+        return
+    }
     Body {
         if (vehicles.isEmpty()) item { ActionCard("Add a vehicle", "Inspection guidance depends on vehicle type.", "Add vehicle", add) }
         else {
             item { Text("Select vehicle", style = MaterialTheme.typography.titleMedium) }
             items(vehicles, key = { it.id }) { v -> Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(selected = chosen == v.id, onClick = { chosen = v.id }); Text(v.name)
+                RadioButton(selected = chosen == v.id, onClick = { if (chosen != v.id && observations.isNotEmpty()) pendingVehicle = v.id else chosen = v.id }); Text(v.name)
             } }
             item { OutlinedButton(onClick = capture, enabled = observations.isEmpty(), modifier = Modifier.fillMaxWidth()) { Text("Preview visual capture") }; if (observations.isNotEmpty()) Text("Finish or leave this checklist before opening the separate camera preview.") }
             item { Text("Only inspect while safely parked. Follow the owner's manual. Unknown checks do not count as completed.") }
+            if (vehicle != null) item {
+                val observed = checks.count { observations[it.id] in listOf(Observation.NO_VISIBLE_CONCERN, Observation.POTENTIAL_CONCERN, Observation.CRITICAL) }
+                Text("$observed of ${checks.size} components observed", style = MaterialTheme.typography.titleMedium)
+                LinearProgressIndicator(progress = { if (checks.isEmpty()) 0f else observed.toFloat() / checks.size }, modifier = Modifier.fillMaxWidth())
+            }
             items(checks, key = { it.id }) { check ->
                 Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(check.title, style = MaterialTheme.typography.titleMedium)
-                        Text(check.guidance)
-                        Observation.entries.forEach { choice ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = (observations[check.id] ?: Observation.UNKNOWN) == choice,
-                                    onClick = { observations[check.id] = choice })
-                                Text(when(choice) {
-                                    Observation.UNKNOWN -> "Not checked / unsure"
-                                    Observation.NO_VISIBLE_CONCERN -> "No visible concern"
-                                    Observation.POTENTIAL_CONCERN -> "Potential concern"
-                                    Observation.CRITICAL -> "Critical concern"
-                                    Observation.NOT_APPLICABLE -> "Not applicable"
-                                })
-                            }
-                        }
+                        Text(observationLabel(observations[check.id] ?: Observation.UNKNOWN))
+                        OutlinedButton(onClick = { detailId = check.id }, modifier = Modifier.fillMaxWidth()) { Text("Check " + check.title) }
                     }
                 }
             }
@@ -276,6 +277,12 @@ private fun Inspection(vehicles: List<Vehicle>, initialId: String?, save: (Inspe
                 }, checks.size)) }, modifier = Modifier.fillMaxWidth()) { Text("Record observations") }
             }
         }
+    }
+    pendingVehicle?.let { target ->
+        AlertDialog(onDismissRequest = { pendingVehicle = null }, title = { Text("Change inspection vehicle?") },
+            text = { Text("Unsaved observations for the current vehicle will be discarded.") },
+            confirmButton = { TextButton(onClick = { chosen = target; pendingVehicle = null }) { Text("Change vehicle") } },
+            dismissButton = { TextButton(onClick = { pendingVehicle = null }) { Text("Cancel") } })
     }
 }
 @Composable
