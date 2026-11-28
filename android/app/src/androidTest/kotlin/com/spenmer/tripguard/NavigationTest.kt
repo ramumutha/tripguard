@@ -38,6 +38,31 @@ class NavigationTest {
         rule.onNodeWithText("Continue manually").performClick()
         rule.onNodeWithText("Vehicle nickname").assertExists()
     }
+    @Test fun guardianPreviewDoesNotClaimActiveMonitoring() {
+        rule.waitUntil(10000) { rule.onAllNodesWithText("Continue locally").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithText("Continue locally").performClick()
+        rule.onNodeWithText("Settings").performClick()
+        rule.onNodeWithText("Explore future features").performClick()
+        rule.onNodeWithText("Explore Guardian").performClick()
+        rule.onNodeWithText("FUTURE FEATURE • INTERACTIVE PREVIEW").assertExists()
+        rule.onNodeWithText("Preview consent review").assertDoesNotExist()
+        rule.onNode(hasScrollAction()).performScrollToNode(hasText("Sharing consent"))
+        rule.onNodeWithText("Sharing consent").performClick()
+        rule.onNodeWithText("Preview consent review").performClick()
+        rule.onNodeWithText("Selected: Preview consent review").assertExists()
+    }
+    @Test fun devicePreviewDisclosesUnverifiedCompatibility() {
+        rule.waitUntil(10000) { rule.onAllNodesWithText("Continue locally").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithText("Continue locally").performClick()
+        rule.onNodeWithText("Settings").performClick()
+        rule.onNodeWithText("Explore future features").performClick()
+        rule.onNode(hasScrollAction()).performScrollToNode(hasText("Explore Connected devices"))
+        rule.onNodeWithText("Explore Connected devices").performClick()
+        rule.onNode(hasScrollAction()).performScrollToNode(hasText("Compatibility"))
+        rule.onNodeWithText("Compatibility").performClick()
+        rule.onNodeWithText("Device unverified").performClick()
+        rule.onNodeWithText("Selected: Device unverified").assertExists()
+    }
     @Test fun garageAllowsAddingVehicle() {
         rule.onNodeWithText("Continue locally").performClick()
         rule.onNodeWithText("Manage vehicles").performClick()
